@@ -197,7 +197,7 @@ const MathLib = (() => {
     return out;
   }
   function parse(src) {
-    const s = String(src || ''); let i = 0;
+    const s = String(src || '').replace(/^\s*(?:\\?\$)+\s*/, '').replace(/\s*(?:\\?\$)+\s*$/, ''); let i = 0;
     const skipWs = () => { while (i < s.length && /\s/.test(s[i])) i++; };
     function seq(stop) {
       const out = [];
@@ -298,11 +298,14 @@ const MathLib = (() => {
   function normalise(text) {
     let t = String(text ?? '');
     if (!/[\\$^_]/.test(t)) return t;
+    /* artefacts of copying from chat apps: doubled backslashes, trailing line-break backslashes, escaped dollar delimiters */
+    t = t.replace(/\\\\(?=[A-Za-z()\[\]])/g, '\\');
+    t = t.replace(/[ \t]*\\{1,2}[ \t]*$/gm, '');
+    t = t.replace(/\\\$\\\$/g, () => '$$').replace(/\\\$(?=\\[A-Za-z])/g, () => '$').replace(/\}\\\$(?!\d)/g, () => '}$');
     t = t.replace(/\\\[([\s\S]+?)\\\]/g, (m, a) => '$' + a.trim() + '$').replace(/\\\(([\s\S]+?)\\\)/g, (m, a) => '$' + a.trim() + '$').replace(/\$\$([\s\S]+?)\$\$/g, (m, a) => '$' + a.trim() + '$');
     t = t.replace(/\\\$/g, '\u0001');
     return t.split(/(\$[^$]*\$)/).map(p => (p.length > 1 && p[0] === '$' && p[p.length - 1] === '$') ? p : wrapBare(p)).join('').replace(/\u0001/g, '\\$');
   }
-
   /* ---------- HTML preview ---------- */
   const e = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function html(nodes) {
@@ -760,7 +763,7 @@ Rules that apply to every answer:
 3. Objectives: write only for the learning objectives provided. Keep their wording and their Core / UK Requirement / US Requirement labels.
 4. Cognitive balance: tag every question with its level – Knowing (recall, identify, order, compute), Applying (formulate, implement, represent) or Reasoning (analyse, integrate, generalise, justify) – and follow the mix requested in the prompt.
 5. Context: use authentic contexts from Abu Dhabi and the UAE (places, heritage, environment, daily life, sport, technology) where they fit. Content must suit UAE culture, values and the age group. Do not refer to alcohol, gambling, smoking, violence, political or religious symbols, or anything culturally insensitive.
-6. Formulas: write every formula in LaTeX between dollar signs, for example $\\frac{3}{4}$, $x^{2}$, $\\sqrt{16}$, $3x+2=11$. For Science, write chemical formulas and equations with \\ce, for example $\\ce{H2O}$ and $\\ce{2H2 + O2 -> 2H2O}$, and units as text, for example $5\\ \\text{m/s}$ and $25^\\circ\\text{C}$. Never use \\( \\), \\[ \\] or code blocks for formulas. Keep ordinary words outside the dollar signs. Describe any diagram in words.
+6. Formulas: write every formula between \\( and \\), for example \\(\\frac{3}{4}\\), \\(x^{2}\\), \\(\\sqrt{16}\\), \\(3x+2=11\\). Do not use dollar signs. For Science, write chemical formulas and equations with \\ce, for example \\(\\ce{H2O}\\) and \\(\\ce{2H2 + O2 -> 2H2O}\\), and units as text, for example \\(5\\ \\text{m/s}\\) and \\(25^\\circ\\text{C}\\). Never put a formula in a code block. Keep ordinary words outside the delimiters. Describe any diagram in words.
 7. Science: use correct scientific terminology and SI units. Activities and investigations must be safe for the age group and use school-laboratory-safe materials. Never suggest hazardous procedures.
 8. Format: reply in plain text, using exactly the labelled layout requested. No tables, no markdown symbols (#, **), no emojis.
 9. Originality: do not copy text from textbooks or websites. Write original wording and original questions.
