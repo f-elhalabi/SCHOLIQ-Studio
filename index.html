@@ -304,8 +304,17 @@ const MathLib = (() => {
     t = t.replace(/\\\$\\\$/g, () => '$$').replace(/\\\$(?=\\[A-Za-z])/g, () => '$').replace(/\}\\\$(?!\d)/g, () => '}$');
     t = t.replace(/\\\[([\s\S]+?)\\\]/g, (m, a) => '$' + a.trim() + '$').replace(/\\\(([\s\S]+?)\\\)/g, (m, a) => '$' + a.trim() + '$').replace(/\$\$([\s\S]+?)\$\$/g, (m, a) => '$' + a.trim() + '$');
     t = t.replace(/\\\$/g, '\u0001');
-    return t.split(/(\$[^$]*\$)/).map(p => (p.length > 1 && p[0] === '$' && p[p.length - 1] === '$') ? p : wrapBare(p)).join('').replace(/\u0001/g, '\\$');
+    const parts = t.split(/(\$[^$]*\$)/);
+    const isMath = p => p.length > 1 && p[0] === '$' && p[p.length - 1] === '$';
+    return parts.map((p, i) => {
+      if (p === '$$') return '';
+      if (isMath(p)) return p.replace(/^\$([\s\S]*?)\s*([.,;:]+)\$$/, (mm, x, y) => '$' + x + '$' + y);
+      if (i > 0 && isMath(parts[i - 1])) p = p.replace(/^\${1,2}/, '');
+      if (i < parts.length - 1 && isMath(parts[i + 1])) p = p.replace(/\${1,2}$/, '');
+      return wrapBare(p);
+    }).join('').replace(/\u0001/g, '\\$');
   }
+
   /* ---------- HTML preview ---------- */
   const e = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   function html(nodes) {
@@ -447,6 +456,7 @@ const DocxLib = (() => {
     return out || run('', o);
   }
   function runs(text, o = {}) {
+    if (typeof MathLib !== 'undefined') text = MathLib.normalise(text);
     if (typeof MathLib !== 'undefined' && MathLib.hasMath(text)) return MathLib.splitMath(text).map(p => p.math != null ? MathLib.toOmml(p.math, o.size) : (p.text ? plainRuns(p.text, o) : '')).join('') || run('', o);
     return plainRuns(text, o);
   }
@@ -615,6 +625,16 @@ function loadDB() {
   return base;
 }
 let DB = loadDB();
+/* Clean maths artefacts (stray backslashes, escaped dollars) in work saved by earlier versions */
+function cleanDeep(o) { if (Array.isArray(o)) return o.map(cleanDeep); if (o && typeof o === 'object') { const r = {}; for (const k in o) r[k] = cleanDeep(o[k]); return r; } return typeof o === 'string' ? MathLib.normalise(o) : o; }
+function migrateDB() {
+  Object.keys(DB.lessons || {}).forEach(id => {
+    const s = cleanDeep(DB.lessons[id]);
+    ['diag', 'discP', 'explP', 'exit', 'prac'].forEach(k => { if (s[k] && Array.isArray(s[k].qs)) s[k].qs = s[k].qs.filter(q => [q.q, q.a, q.fb, q.opts, q.pre].some(x => String(x || '').trim())); });
+    DB.lessons[id] = s;
+  });
+}
+try { migrateDB(); } catch (e) { }
 let CUR = null, FIELD = 'card';
 const UI = { s: 'Mathematics', g: 8, u: null, l: null, tab: 'rules' };
 let saveTimer = null;
@@ -1210,6 +1230,7 @@ function numbered(text) {
   return arr.length ? arr.map((x, i) => P(`${i + 1}.\u00A0${x}`, { indent: 360, hanging: 360, after: 60 })).join('') : P('Nothing added.', MUTE);
 }
 function qTable(qs, kind) {
+  qs = qs.filter(q => [q.q, q.a, q.fb, q.opts].some(x => MathLib.normalise(String(x || '')).trim()));
   if (!qs.length) return P('No questions added.', MUTE);
   if (kind === 'diag') return T([['#', 'Question', 'Answer', 'Feedback', 'Prerequisite', 'Level'], ...qs.map((q, i) => [String(i + 1), qText(q), q.a, q.fb, q.pre, q.lvl])], [450, 2800, 1900, 1800, 1400, 1288]);
   if (kind === 'p') return T([['#', 'Question', 'Answer', 'Feedback', 'LO', 'Level', 'Tier'], ...qs.map((q, i) => [String(i + 1), qText(q), q.a, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl, q.tier])], [450, 2500, 2000, 1650, 650, 1200, 1188]);
