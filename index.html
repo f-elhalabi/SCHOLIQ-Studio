@@ -83,7 +83,7 @@ pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Consolas,monospace;backgro
 .fr label{display:block}.hint{display:block;font-weight:400;font-size:12.5px;color:var(--mut);margin-top:1px}
 .count{font-size:13px;color:var(--mut);margin:10px 0}.count.ok{color:var(--green);font-weight:600}.count.low{color:var(--goldd);font-weight:600}
 .cov{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:6px 0 4px;font-size:13px}
-.chip{border-radius:20px;padding:2px 10px;font-weight:600;font-size:12.5px}.chip.ok{background:#E3F4EB;color:var(--green)}.chip.low{background:var(--warnbg);color:var(--goldd)}.covn{color:var(--mut)}
+.chip{border-radius:20px;padding:2px 10px;font-weight:600;font-size:12.5px}.chip.ok{background:#E3F4EB;color:var(--green)}.chip.low{background:var(--warnbg);color:var(--goldd)}.chip.mid{background:#FFF1CC;color:var(--goldd)}.covn{color:var(--mut)}
 .qc,.loc{border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:0 0 14px;background:#fff}
 .qc-h,.loc-h{display:flex;align-items:center;gap:12px;margin-bottom:8px}
 .qc-h .x{margin-left:auto}
@@ -799,7 +799,7 @@ function hasContent(id, l, s) {
   switch (id) {
     case 'card': return !!(s.author || s.notes);
     case 'diag': return s.diag.qs.length > 0;
-    case 'hook': return any(s.hook);
+    case 'hook': return any({ ...s.hook, img: '', imgd: '' });
     case 'disc': return Object.values(s.disc.types).some(Boolean) || any(s.disc) || any(s.disc.guided) || s.discP.qs.length > 0;
     case 'expl': return Object.values(s.expl).some(e => e && any(e)) || s.explP.qs.length > 0;
     case 'pt': return any(s.pt) || (s.pt.procs || []).length > 0;
@@ -842,6 +842,8 @@ function ctxBlock(l, s) {
   const type = pm ? `Part ${pm[1]} of ${pm[2]} – this topic is split over ${pm[2]} lessons; cover only the objectives listed here.` : /Part 1/.test(l.role) ? 'Part 1 – build understanding of the concepts first.' : /Part 2/.test(l.role) ? 'Part 2 – keep new explanation brief; focus on practice, applications and problem solving.' : 'Single lesson – full coverage of the objectives.';
   let t = `LESSON\nSubject: ${l.sub}\nGrade ${l.g} · Unit ${l.u}: ${l.un}\nLesson: ${l.t} (${l.id})\nLesson type: ${type}\nADEK topic: ${l.topic}${l.area ? '\nScience area: ' + l.area : ''}\n\nLEARNING OBJECTIVES\n${los}`;
   if (l.stmt) t += `\n\nADEK STANDARD${l.code ? ' (' + l.code + ')' : ''}\n${l.stmt.length > 900 ? l.stmt.slice(0, 897).trimEnd() + '…' : l.stmt}`;
+  t += `\n\nUNITS OF MEASUREMENT\n${unitsText(l)}`;
+  if (isEss(l)) t += `\n\nWEIGHT OF THIS LESSON\n${essText(l)}`;
   if (s.notes && s.notes.trim()) t += `\n\nTEACHER'S SOURCE NOTES (use as background; do not copy)\n${s.notes.trim()}`;
   return t;
 }
@@ -853,7 +855,7 @@ const QTYPE_GUIDE = `QUESTION TYPES (choose the type that fits each question and
 - Drag and drop: Options: one per line as "item | target"; an extra wrong item is written "item |"; no Answer line
 - Fill in the blank: write ___ in the Question for each blank; Answer: the missing words in order, separated by ";" (use "/" between accepted alternatives)
 For a numerical or one-word answer use Fill in the blank, for example "x = ___". Use Ordering, Matching and Drag and drop only where they fit the content naturally.`;
-const QFMT = (extra) => `Q1\nType: MCQ | True or False | Ordering | Matching | Drag and drop | Fill in the blank\nQuestion: …\nOptions: … (only for the types that need them, see below)\nAnswer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning\nImage: none   (write a one-line description of the picture only if the question cannot be understood without one)\n\n${QTYPE_GUIDE}`;
+const QFMT = (extra) => `Q1\nType: MCQ | True or False | Ordering | Matching | Drag and drop | Fill in the blank\nQuestion: …\nOptions: … (only for the types that need them, see below)\nAnswer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning\nImage: none   (write a one-line description of the picture or simulation only if the question cannot be understood without one)\n\n${QTYPE_GUIDE}`;
 const LOFMT = n => 'LO: number of the learning objective (1 to ' + n + ')\n';
 function taskText(id, l, s) {
   const n = l.los.length;
@@ -868,11 +870,11 @@ function taskText(id, l, s) {
       fmt.push('GUIDED QUESTIONS\nLO1\n1. …\n2. …\nLO2\n1. …\n(one question or instruction per line, for every learning objective LO1 to LO' + n + ')');
       return `TASK\nDesign the discovery stage of this lesson. Students must find the idea themselves BEFORE any explanation. Write: ${parts.join('; ')}.\n\nFORMAT\n${fmt.join('\n')}\n\nCONSTRAINTS\n- No explanation of the rule inside the discovery.\n- Guided questions: 3–5 for each objective, from simple observation to stating the rule.\n- Use short, clear instructions.`;
     }
-    case 'discP': return `TASK\nWrite the practice questions that students do right AFTER the discovery stage. They consolidate what students have just discovered, before the formal explanation: use only ideas available from the discovery. Write ${PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${PRACTICE_MIN * n} in total), varied: direct, multi-step, real-context, spot-the-error and reasoning questions.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier.\n- Solve every question first and check each answer.`;
+    case 'discP': return `TASK\nWrite the practice questions that students do right AFTER the discovery stage. They consolidate what students have just discovered, before the formal explanation: use only ideas available from the discovery. Write ${isEss(l) ? 5 : PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${(isEss(l) ? 5 : PRACTICE_MIN) * n} in total), varied: direct, multi-step, real-context, spot-the-error and reasoning questions.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier.\n- Solve every question first and check each answer.`;
     case 'expl': return `TASK\nFor EACH learning objective (LO1 to LO${n}), write the explanation for students.\n\nFORMAT (repeat for each objective, in order)\nLO1\nConcept: 3–5 short sentences, then the rule in one line.\nWorked example: numbered steps, ending with the final answer.\nCommon mistake: the mistake students make and how to avoid it.\nGuided exercises: 3–4 exercises, one per line, from easy to harder, each with its answer in brackets.\n\nCONSTRAINTS\n- Write LO1, LO2 … as headings, exactly as shown.\n- Use different representations where helpful (words, numbers, a table described in words, a diagram described in words).\n- Solve every example and exercise before writing it.`;
-    case 'explP': return `TASK\nWrite the practice questions that students do right AFTER the explanation. Write ${PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${PRACTICE_MIN * n} in total), many and varied: direct, multi-step, real-context, spot-the-error, and reasoning questions (explain, justify, compare).\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier.\n- Solve every question first and check each answer.`;
+    case 'explP': return `TASK\nWrite the practice questions that students do right AFTER the explanation. Write ${isEss(l) ? 5 : PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${(isEss(l) ? 5 : PRACTICE_MIN) * n} in total), many and varied: direct, multi-step, real-context, spot-the-error, and reasoning questions (explain, justify, compare).\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier.\n- Solve every question first and check each answer.`;
     case 'pt': return l.sub === 'Science' ? `TASK\nWrite ONE performance task in the style of PISA scientific literacy: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must explain the phenomenon scientifically, evaluate or design a scientific enquiry, and interpret data and evidence. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers and the scientific reasoning\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Explaining phenomena, Evaluating and designing enquiry, Interpreting data and evidence\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, use of evidence and explanation.\n- Any practical part must be safe and use school-laboratory-safe materials.\n- Work out the task fully before writing the model solution.` : `TASK\nWrite ONE performance task in the style of PISA: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must formulate the situation mathematically, use the mathematics of this lesson, and then interpret and evaluate the result. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Formulating, Employing, Interpreting, Reasoning\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, method and explanation.\n- Solve the task fully before writing the model solution.`;
-    case 'exit': return `TASK\nWrite an exit ticket with exactly 2 questions for EACH learning objective (${2 * n} questions in total). Each takes less than 2 minutes. For every objective, one question is Knowing or Applying and the other is Applying or Reasoning.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n), true)}\n\nCONSTRAINTS\n- Short answers; no multi-page tasks.\n- Solve every question first and check each answer.`;
+    case 'exit': return `TASK\nWrite an exit ticket with exactly ${isEss(l) ? 3 : 2} questions for EACH learning objective (${(isEss(l) ? 3 : 2) * n} questions in total). Each takes less than 2 minutes. For every objective, ${isEss(l) ? 'one question is Knowing or Applying, one is Applying and one is Reasoning.' : 'one question is Knowing or Applying and the other is Applying or Reasoning.'}\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n), true)}\n\nCONSTRAINTS\n- Short answers; no multi-page tasks.\n- Solve every question first and check each answer.`;
     case 'sum': return `TASK\nWrite a revision summary for the exam on this lesson.\n\nFORMAT\nKEY RULES\n- one rule or formula per line\nEXAM EXAMPLES\nExample 1: … Answer: …   (3 examples)\nMIND MAP\nCentre idea, then indented branches using two spaces per level\nCOMMON EXAM MISTAKES\n- one mistake per line\n\nCONSTRAINTS\n- Cover every learning objective.\n- Solve every example first and check each answer.`;
   }
   return '';
@@ -1033,12 +1035,16 @@ function qWarn(q, o, n) {
   if (!qHasAnswer(q)) w.push(qDerived(q) ? 'items missing' : 'answer missing');
   if (!q.lvl) w.push('level missing');
   if (o.lo && !(+q.lo >= 1 && +q.lo <= n)) w.push('objective missing');
-  if (String(q.imgd || '').trim() && !String(q.img || '').trim()) w.push('image name missing');
+  if (String(q.imgd || '').trim() && !String(q.img || '').trim()) w.push('image / simulation name missing');
   return w;
 }
+function isEss(l) { return !!l && l.pri === 'Essential'; }
+function unitsText(l) { return l && l.sub === 'Science' ? 'Units of measurement (ADEK Working Scientifically): write every quantity with its SI unit, convert units where the question needs it, use a sensible number of significant figures, and use correct IUPAC names in chemistry. Check the unit in every answer and in every worked example.' : 'Units of measurement: write the unit with every measurement or quantity in questions and answers, check conversions (for example cm to m, minutes to hours), and show the unit in the final line of every worked example.'; }
+function essText(l) { return 'Essential lesson (assessment-critical): give it more weight than a Supporting lesson. Aim for 5 to 6 practice questions per objective after discovery and after explanation, at least 3 exit questions per objective, and include reasoning questions (explain, justify, compare).'; }
+function noticeBanners(l) { return `<p class="banner req">${esc(unitsText(l))}</p>${isEss(l) ? `<p class="banner req">${esc(essText(l))}</p>` : ''}`; }
 function imageRow(base, o) {
   o = o || {};
-  return `<div class="fr imgrow"><label>Image (optional)<span class="hint">If this exercise builds on a picture, write its number or name. The Word file shows a box in its place.</span></label><div class="imgin">${inp(base + '.img', o.img || '', { ph: 'Image number or name, e.g. G7-U5-L2-01' })}${inp(base + '.imgd', o.imgd || '', { ph: 'What the image shows (one line)' })}</div></div>`;
+  return `<div class="fr imgrow"><label>Image / Simulation (optional)<span class="hint">If this part builds on a picture or a simulation, write its number or name. The Word file shows a box in its place.</span></label><div class="imgin">${inp(base + '.img', o.img || '', { ph: 'Image or simulation number / name, e.g. G7-U5-L2-01' })}${inp(base + '.imgd', o.imgd || '', { ph: 'What it shows or does (one line)' })}</div></div>`;
 }
 function qCard(list, i, q, o) {
   const l = L(), n = l.los.length, warn = qWarn(q, o, n), P = `${list}.qs.${i}`;
@@ -1057,7 +1063,8 @@ function qCard(list, i, q, o) {
   <div class="c1">${imageRow(P, q)}</div></div></div>`;
 }
 function coverageStrip(counts, min, label) {
-  return `<div class="cov"><strong>${label}</strong>${counts.map((c, i) => `<span class="chip ${c >= min ? 'ok' : 'low'}">LO${i + 1}: ${c}</span>`).join('')}<span class="covn">${min === PRACTICE_MIN ? `aim for ${PRACTICE_MIN} to 6 per objective` : `minimum ${min} per objective`}</span></div>`;
+  const ess = isEss(L()), tgt = ess ? (min === PRACTICE_MIN ? 5 : 3) : min;
+  return `<div class="cov"><strong>${label}</strong>${counts.map((c, i) => `<span class="chip ${c >= tgt ? 'ok' : c >= min ? 'mid' : 'low'}">LO${i + 1}: ${c}</span>`).join('')}<span class="covn">${ess ? `Essential lesson: aim for ${min === PRACTICE_MIN ? '5 to 6' : '3'} per objective (minimum ${min})` : min === PRACTICE_MIN ? `aim for ${PRACTICE_MIN} to 6 per objective` : `minimum ${min} per objective`}</span></div>`;
 }
 function questionsBlock(id, o) {
   const l = L(), s = LS(CUR), list = s[id], a = analyse(l, s);
@@ -1067,12 +1074,13 @@ function questionsBlock(id, o) {
   if (id === 'discP') notes = coverageStrip(a.pD, PRACTICE_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
   if (id === 'explP') notes = coverageStrip(a.pE, PRACTICE_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
   if (id === 'exit') notes = coverageStrip(a.ex, EXIT_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
-  return `${o && o.title ? `<h3 class="sub">${o.title}</h3>${o.help ? `<p class="subhelp">${o.help}</p>` : ''}` : ''}${tray(id)}${aiBox(id)}${notes}<div>${list.qs.map((q, i) => qCard(id, i, q, cfg)).join('')}</div><button class="btn secondary" data-act="addq" data-list="${id}">Add a question</button>`;
+  const unitsLine = id === 'diag' ? '' : `<p class="banner req">${esc(unitsText(l))}</p>`;
+  return `${o && o.title ? `<h3 class="sub">${o.title}</h3>${o.help ? `<p class="subhelp">${o.help}</p>` : ''}` : ''}${tray(id)}${aiBox(id)}${unitsLine}${notes}<div>${list.qs.map((q, i) => qCard(id, i, q, cfg)).join('')}</div><button class="btn secondary" data-act="addq" data-list="${id}">Add a question</button>`;
 }
 function formRows(id, defs, store) {
   return `<div class="form">${defs.filter(d => !d.hidden).map(d => fieldRow(d.label, d.hint || '', d.rows === 1 ? inp(`${id}.${d.k}`, store[d.k] || '') : ta(`${id}.${d.k}`, store[d.k] || '', { rows: d.rows }))).join('')}</div>`;
 }
-function panelHook() { const s = LS(CUR); return tray('hook') + aiBox('hook') + formRows('hook', HOOK_FIELDS, s.hook); }
+function panelHook() { const s = LS(CUR); return tray('hook') + aiBox('hook') + formRows('hook', HOOK_FIELDS, s.hook) + imageRow('hook', s.hook); }
 function panelDisc() {
   const l = L(), s = LS(CUR), d = s.disc, t = d.types, a = analyse(l, s);
   const tick = (k, lab, hint) => `<label class="tick ${t[k] ? 'on' : ''}"><input type="checkbox" data-b="disc.types.${k}" ${t[k] ? 'checked' : ''}><span><strong>${lab}</strong><small>${hint}</small></span></label>`;
@@ -1123,6 +1131,7 @@ function panelCard() {
   ${marks.length ? `<p class="banner">${esc(marks.join(' · '))}</p>` : ''}${l.xchk ? `<p class="banner req">Library review flag: ${esc(l.xchk)}.</p>` : ''}
   ${l.stmt ? `<details class="stmt"><summary>ADEK standard${l.code ? ' · ' + esc(l.code) : ''}</summary><p>${esc(l.stmt)}</p>${l.src ? `<p class="srcl">Source: ${esc(l.src)}</p>` : ''}</details>` : ''}
   ${l.sub === 'Science' ? `<p class="banner req">Science library: grades, units, lessons and the splitting of objectives are provisional production planning, not the official ADEK mapping.${/provisional/i.test(l.seg || '') ? ' The objective wording of this lesson comes from provisional segmentation of the ADEK source text and needs a subject specialist’s review.' : ''}</p>` : ''}
+  ${noticeBanners(l)}
   <h3>Learning objectives</h3><ol class="los big">${l.los.map(o => `<li><span class="tag ${o.k === 'Core' ? 'core' : 'ext'}">${esc(o.k)}</span><span class="otx">${esc(o.x)}</span></li>`).join('')}</ol>
   <p class="meta">Ideas about ${esc(l.sub)}: ${esc(l.ideas)}</p>
   <div class="form">${fieldRow('Author', 'Your name, shown on the Word file.', inp('author', s.author))}
@@ -1299,7 +1308,7 @@ const D = DocxLib;
 const P = (t, o) => D.para(t, o), LN = (t, o) => D.lines(t, o), T = (r, w, o) => D.table(r, w, o);
 const H1 = (t, pbb) => P(t, { style: 'Heading1', pbb }), H2 = t => P(t, { style: 'Heading2' }), H3 = t => P(t, { style: 'Heading3' });
 const MUTE = { italic: true, color: D.MUTED };
-const imgBox = (n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P('[IMAGE: ' + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
+const imgBox = (n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P('[IMAGE / SIMULATION: ' + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
 function qCellXml(q) {
   const tag = QTYPE_NAME[q.type] ? P(QTYPE_NAME[q.type], { italic: true, color: D.MUTED, size: 16, after: 20 }) : '';
   let body = D.lines(q.q || '', { size: 19 });
@@ -1308,6 +1317,7 @@ function qCellXml(q) {
 }
 function imagesText() {
   const s = LS(CUR), out = [], add = (where, n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); if (n || d) out.push(`${n || '(name needed)'}${d ? ' – ' + d : ''}  (${where})`); };
+  add('Warm-up', s.hook.img, s.hook.imgd);
   [['diag', 'Diagnostic'], ['discP', 'Discovery practice'], ['explP', 'Explanation practice'], ['exit', 'Exit ticket']].forEach(([k, lab]) => s[k].qs.forEach((q, i) => add(`${lab}, question ${i + 1}`, q.img, q.imgd)));
   L().los.forEach((_, i) => { const g = (s.disc.gimg || {})[i + 1] || {}; add(`Discovery guided questions, LO${i + 1}`, g.img, g.imgd); const e = s.expl[i + 1] || {}; add(`Explanation guided exercises, LO${i + 1}`, e.img, e.imgd); });
   return out.join('\n');
@@ -1333,7 +1343,7 @@ function stageBody(id, full) {
   switch (id) {
     case 'card': return head(`${l.t}`) + H2('Learning objectives') + T([['LO', 'Category', 'Learning objective'], ...l.los.map((o, i) => [`LO${i + 1}`, o.k, o.x])], [800, 1800, 7038]) + P(`Ideas about ${l.sub}: ` + l.ideas, MUTE) + (l.stmt ? H2('ADEK standard statement') + (l.code ? P(l.code, { color: D.MUTED, size: 18, after: 40 }) : '') + LN(l.stmt) : '') + (l.xchk ? P('Library review flag: ' + l.xchk, { italic: true, color: D.GOLD }) : '') + (s.notes.trim() ? H2('Source notes') + LN(s.notes) : '');
     case 'diag': return head(`${s.diag.qs.length} question${s.diag.qs.length === 1 ? '' : 's'}`) + qTable(s.diag.qs, 'diag');
-    case 'hook': return head('Warm-up') + kv(HOOK_FIELDS.map(d => [d.label, s.hook[d.k]]));
+    case 'hook': return head('Warm-up') + kv(HOOK_FIELDS.map(d => [d.label, s.hook[d.k]])) + imgBox(s.hook.img, s.hook.imgd);
     case 'disc': {
       const t = s.disc.types, names = [t.sim ? 'Simulation' : '', t.doc ? 'Document' : '', t.q ? 'Questions' : ''].filter(Boolean);
       let b = head(`Objectives ${loRange(a.n)} · ${s.discP.qs.length} practice questions`) + H2('Discovery type') + P(`${t.sim ? '☑' : '☐'} Simulation    ${t.doc ? '☑' : '☐'} Document    ${t.q ? '☑' : '☐'} Questions`, { after: 100 });
@@ -1373,7 +1383,7 @@ function appendixBody() {
   let b = H1('Appendix A – Checks', true) + H2('Coverage by objective') + T([['LO', 'Guided (discovery)', 'Practice (discovery)', 'Explanation', 'Guided exercises', 'Practice (explanation)', 'Exit'], ...l.los.map((o, i) => [`LO${i + 1}`, a.guidedOK[i] ? 'Yes' : 'No', String(a.pD[i]), a.explOK[i] ? 'Yes' : 'No', a.gexOK[i] ? 'Yes' : 'No', String(a.pE[i]), String(a.ex[i])])], [800, 1400, 1500, 1300, 1400, 1700, 1538]);
   b += H2('Cognitive balance (both practice sets and exit ticket)') + T([['Level', 'Questions', 'Share', 'Target'], ...LEVELS.map(k => [k, String(a.lv[k]), a.pct(k) + '%', targetOf(l)[k] + '%']), ['Untagged', String(a.untagged), '', '']], [2800, 2200, 2200, 2438]);
   b += H2('Author checklist') + LN(MANUAL.map(([k, t]) => (s.self[k] ? '☑ ' : '☐ ') + t).join('\n'));
-  b += H1('Appendix B – For the production team', true) + T([['Item', 'Notes'], ['Simulation notes', ''], ['Images and assets needed', imagesText()], ['Open questions for the author', '']], [2600, 7038], { labelCol: true });
+  b += H1('Appendix B – For the production team', true) + T([['Item', 'Notes'], ['Simulation notes', ''], ['Images, simulations and assets needed', imagesText()], ['Open questions for the author', '']], [2600, 7038], { labelCol: true });
   return b;
 }
 const footerText = l => `ADEK ${l.sub} · ${l.id} · ${l.t}`;
@@ -1406,7 +1416,7 @@ function structureJSON() {
     stages: [
       { order: 1, id: 'lesson-card', notes: s.notes },
       { order: 2, id: 'diagnostic', questions: s.diag.qs.map(optQ) },
-      { order: 3, id: 'warm-up', scenario: s.hook.scenario || '', openingQuestion: s.hook.question || '', possibleResponses: s.hook.responses || '', link: s.hook.link || '' },
+      { order: 3, id: 'warm-up', scenario: s.hook.scenario || '', openingQuestion: s.hook.question || '', possibleResponses: s.hook.responses || '', link: s.hook.link || '', image: imgJ(s.hook) },
       { order: 4, id: 'discovery', types: ['sim', 'doc', 'q'].filter(k => t[k]).map(k => ({ sim: 'simulation', doc: 'document', q: 'questions' }[k])), simulation: t.sim ? { ...Object.fromEntries(SIM_FIELDS.map(d => [d.k, s.disc[d.k] || ''])), studentInstructions: s.disc.simIntro || '' } : null, document: t.doc ? { text: s.disc.doc || '', studentInstructions: s.disc.docIntro || '' } : null, guidedQuestions: l.los.map((o, i) => ({ objective: 'LO' + (i + 1), items: lines(s.disc.guided[i + 1]), image: imgJ((s.disc.gimg || {})[i + 1]) })), practice: sortByLO(s.discP.qs).map(optQ) },
       { order: 5, id: 'explanation', objectives: l.los.map((o, i) => { const e = s.expl[i + 1] || {}; return { objective: 'LO' + (i + 1), concept: e.concept || '', workedExample: e.example || '', commonMistake: e.mistake || '', guidedExercises: lines(e.guided), image: imgJ(e) }; }), practice: sortByLO(s.explP.qs).map(optQ) },
       { order: 6, id: 'performance-task', included: analyse(l, s).ptHas, task: analyse(l, s).ptHas ? { title: s.pt.title || '', context: s.pt.context || '', task: s.pt.task || '', product: s.pt.product || '', modelSolution: s.pt.model || '', rubric: { level4: s.pt.r4 || '', level3: s.pt.r3 || '', level2: s.pt.r2 || '', level1: s.pt.r1 || '' }, processes: s.pt.procs || [] } : null },
