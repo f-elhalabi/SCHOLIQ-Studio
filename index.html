@@ -162,6 +162,7 @@ kbd,code{background:#EEF2F8;border-radius:4px;padding:1px 6px;font-size:12.5px}
 .stmt p{margin:8px 0 0;white-space:pre-line;font-size:14px}.stmt .srcl{color:var(--mut);font-size:12.5px}
 
 .pasteh{margin:2px 0 8px;font-size:12.5px;color:var(--mut)}
+.imgrow{padding:10px 12px;border:1px dashed var(--gold);border-radius:8px;background:#FFFCF5;margin-top:4px}.imgrow label{margin-bottom:6px}.imgin{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:10px}.loc>.imgrow{margin-top:10px}@media(max-width:720px){.imgin{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -465,6 +466,7 @@ const DocxLib = (() => {
     if (o.style) ppr += `<w:pStyle w:val="${o.style}"/>`;
     if (o.keepNext) ppr += '<w:keepNext/>';
     if (o.pbb) ppr += '<w:pageBreakBefore/>';
+    if (o.box) ppr += '<w:pBdr><w:top w:val="single" w:sz="8" w:space="3" w:color="B07A12"/><w:left w:val="single" w:sz="8" w:space="4" w:color="B07A12"/><w:bottom w:val="single" w:sz="8" w:space="3" w:color="B07A12"/><w:right w:val="single" w:sz="8" w:space="4" w:color="B07A12"/></w:pBdr>';
     if (o.shade) ppr += `<w:shd w:val="clear" w:color="auto" w:fill="${o.shade}"/>`;
     if (o.before != null || o.after != null) ppr += `<w:spacing w:before="${o.before ?? 0}" w:after="${o.after ?? 0}"/>`;
     if (o.indent) ppr += `<w:ind w:left="${o.indent}"${o.hanging ? ` w:hanging="${o.hanging}"` : ''}/>`;
@@ -565,7 +567,7 @@ const FIELDS = [
   { id: 'expl', t: 'Explanation', g: 'For each objective: the idea, a worked example, a common mistake and guided exercises; then practice questions.' },
   { id: 'pt', t: 'Performance task', g: 'One real-life task with several steps, a model solution and a rubric.' },
   { id: 'exit', t: 'Exit ticket', g: 'Two or more short questions for every objective.' },
-  { id: 'sum', t: 'Summary for exam', g: 'Key rules, exam examples, flashcards, a mind map and common mistakes.' },
+  { id: 'sum', t: 'Summary for exam', g: 'Key rules, exam examples, a mind map and common mistakes.' },
   { id: 'fin', t: 'Check and export', g: 'Review the automatic checks, then export the Word file for review or the separate stage files.' },
 ];
 const CONTENT_FIELDS = ['diag', 'hook', 'disc', 'expl', 'pt', 'exit', 'sum'];
@@ -630,7 +632,7 @@ function cleanDeep(o) { if (Array.isArray(o)) return o.map(cleanDeep); if (o && 
 function migrateDB() {
   Object.keys(DB.lessons || {}).forEach(id => {
     const s = cleanDeep(DB.lessons[id]);
-    ['diag', 'discP', 'explP', 'exit', 'prac'].forEach(k => { if (s[k] && Array.isArray(s[k].qs)) s[k].qs = s[k].qs.filter(q => [q.q, q.a, q.fb, q.opts, q.pre].some(x => String(x || '').trim())); });
+    ['diag', 'discP', 'explP', 'exit', 'prac'].forEach(k => { if (s[k] && Array.isArray(s[k].qs)) { s[k].qs = s[k].qs.filter(q => [q.q, q.a, q.fb, q.opts, q.pre].some(x => String(x || '').trim())); s[k].qs.forEach(q => { if (!q.type && String(q.opts || '').trim()) q.type = 'mcq'; }); } });
     DB.lessons[id] = s;
   });
 }
@@ -649,7 +651,7 @@ function newLS() {
 function LS(id) {
   if (!DB.lessons[id]) DB.lessons[id] = newLS();
   const s = DB.lessons[id];
-  s.diag = s.diag || { qs: [] }; s.disc = s.disc || {}; s.disc.types = s.disc.types || {}; s.disc.guided = s.disc.guided || {};
+  s.diag = s.diag || { qs: [] }; s.disc = s.disc || {}; s.disc.types = s.disc.types || {}; s.disc.guided = s.disc.guided || {}; s.disc.gimg = s.disc.gimg || {};
   s.discP = s.discP || { qs: [] }; s.explP = s.explP || { qs: [] }; s.exit = s.exit || { qs: [] }; s.expl = s.expl || {}; s.hook = s.hook || {}; s.pt = s.pt || { procs: [] }; s.sum = s.sum || { cards: [] }; s.self = s.self || {}; s.done = s.done || {};
   return s;
 }
@@ -660,7 +662,34 @@ function setPath(o, p, v) {
   for (let i = 0; i < ks.length - 1; i++) { const nx = /^\d+$/.test(ks[i + 1]); if (o[ks[i]] == null) o[ks[i]] = nx ? [] : {}; o = o[ks[i]]; }
   o[ks[ks.length - 1]] = v;
 }
-const newQ = () => ({ q: '', opts: '', a: '', fb: '', lo: 0, lvl: '', tier: '', pre: '' });
+const QTYPES = [
+  { v: 'mcq', t: 'Multiple choice (MCQ)' }, { v: 'tf', t: 'True or False' }, { v: 'order', t: 'Ordering' },
+  { v: 'match', t: 'Matching' }, { v: 'dnd', t: 'Drag and drop' }, { v: 'fill', t: 'Fill in the blank' },
+];
+const QTYPE_NAME = Object.fromEntries(QTYPES.map(x => [x.v, x.t]));
+const QTYPE_JSON = { mcq: 'multiple-choice', tf: 'true-false', order: 'ordering', match: 'matching', dnd: 'drag-and-drop', fill: 'fill-in-the-blank' };
+/* What each exercise type asks the teacher for: q = question label, o = items/options box (null = none), a = answer box (null = derived from the items) */
+const QTYPE_UI = {
+  mcq: { q: ['Question', ''], o: ['Options', 'One per line: A) … B) … C) … D) …'], a: ['Correct answer', 'The correct letter, then the option text.'] },
+  tf: { q: ['Statement', 'Write a statement that is either true or false.'], o: null, a: 'tf' },
+  order: { q: ['Instruction', 'For example: Put the steps in the correct order.'], o: ['Items in the correct order', 'One per line, first to last. The platform shuffles them for the student.'], a: null },
+  match: { q: ['Instruction', 'For example: Match each term to its description.'], o: ['Pairs', 'One pair per line: left item | right item. Three to five pairs.'], a: null },
+  dnd: { q: ['Instruction', 'Say what the student drags and where to.'], o: ['Items and targets', 'One per line: item to drag | target. For an extra wrong item write: item |'], a: null },
+  fill: { q: ['Text with blanks', 'Write ___ where each blank goes.'], o: null, a: ['Answers for the blanks', 'In order, separated by ; and use / between accepted alternatives.'] },
+};
+const newQ = () => ({ type: '', q: '', opts: '', a: '', fb: '', lo: 0, lvl: '', tier: '', pre: '', img: '', imgd: '' });
+const qLines = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
+const qPairs = t => qLines(t).map(x => { const i = x.indexOf('|'); return i < 0 ? [x, ''] : [x.slice(0, i).trim(), x.slice(i + 1).trim()]; });
+const qDerived = q => ['order', 'match', 'dnd'].includes(q.type);
+const qHasAnswer = q => qDerived(q) ? qLines(q.opts).length >= 2 : !!String(q.a || '').trim();
+function qAnswerText(q) {
+  switch (q.type) {
+    case 'order': return qLines(q.opts).map((x, i) => `${i + 1}. ${x}`).join('\n');
+    case 'match': return qPairs(q.opts).map(([a, b]) => `${a} → ${b}`).join('\n');
+    case 'dnd': return qPairs(q.opts).map(([a, b]) => b ? `${a} → ${b}` : `${a} → (extra item, no target)`).join('\n');
+    default: return q.a || '';
+  }
+}
 
 
 /* ================= Parsing ================= */
@@ -680,6 +709,16 @@ function parseLabelled(text, defs) {
 }
 function normLevel(s) { s = String(s || ''); if (/know/i.test(s)) return 'Knowing'; if (/appl/i.test(s)) return 'Applying'; if (/reason/i.test(s)) return 'Reasoning'; if (/^k/i.test(s.trim())) return 'Knowing'; if (/^a/i.test(s.trim())) return 'Applying'; if (/^r/i.test(s.trim())) return 'Reasoning'; return ''; }
 function normTier(s) { s = String(s || ''); if (/basic/i.test(s)) return 'Basic'; if (/fluen/i.test(s)) return 'Fluency'; if (/appl/i.test(s)) return 'Applied'; return ''; }
+function normType(s) {
+  s = String(s || '').toLowerCase();
+  if (/true|false|t\/f/.test(s)) return 'tf';
+  if (/multiple|mcq|choice/.test(s)) return 'mcq';
+  if (/order|sequenc/.test(s)) return 'order';
+  if (/match|pair/.test(s)) return 'match';
+  if (/drag|drop/.test(s)) return 'dnd';
+  if (/fill|blank|gap|cloze/.test(s)) return 'fill';
+  return '';
+}
 function normOpts(s) {
   s = String(s || '').trim(); if (!s) return '';
   if (s.includes('|')) return s.split('|').map(x => x.trim()).filter(Boolean).join('\n');
@@ -687,19 +726,27 @@ function normOpts(s) {
   return s;
 }
 function parseQuestions(text) {
-  const qs = []; let cur = null, last = null;
-  const labRe = /^\s*(?:[-*#]+\s*)?\**\s*(Question|Q|Options|Option|Choices|Answer|Correct answer|Feedback|Hint|LO|Objective|Level|Tier|Prerequisite|Skill)\s*\**\s*:\s*\**\s*(.*)$/i;
+  const qs = []; let cur = null, last = null, pendingType = '';
+  const labRe = /^\s*(?:[-*#]+\s*)?\**\s*(Question type|Exercise type|Type|Image description|Image|Pairs|Items|Question|Q|Options|Option|Choices|Answer|Correct answer|Feedback|Hint|LO|Objective|Level|Tier|Prerequisite|Skill)\s*\**\s*:\s*\**\s*(.*)$/i;
   const headRe = /^\s*(?:[-*#]+\s*)?\**\s*(?:Q|Question)\s*\d+\s*[.):\-]*\s*\**\s*(.*)$/i;
-  const map = { option: 'opts', options: 'opts', choices: 'opts', answer: 'a', 'correct answer': 'a', feedback: 'fb', hint: 'fb', lo: 'lo', objective: 'lo', level: 'lvl', tier: 'tier', prerequisite: 'pre', skill: 'pre' };
+  const map = { option: 'opts', options: 'opts', choices: 'opts', answer: 'a', 'correct answer': 'a', feedback: 'fb', hint: 'fb', lo: 'lo', objective: 'lo', level: 'lvl', tier: 'tier', prerequisite: 'pre', skill: 'pre', type: 'type', 'question type': 'type', 'exercise type': 'type', image: 'imgd', 'image description': 'imgd', pairs: 'opts', items: 'opts' };
   for (const raw of String(text || '').replace(/\r/g, '').split('\n')) {
     const line = raw.replace(/\s+$/, ''); if (!line.trim()) continue;
     const m = line.match(labRe);
-    if (m && /^(question|q)$/i.test(m[1])) { if (!cur || cur.q) { cur = newQ(); qs.push(cur); } cur.q = m[2].trim(); last = 'q'; continue; }
-    if (!m) { const h = line.match(headRe); if (h) { cur = newQ(); qs.push(cur); if (h[1]) { cur.q = h[1].trim(); last = 'q'; } else last = null; continue; } }
-    if (m && cur) { const k = map[m[1].toLowerCase()], v = m[2].trim(); if (k === 'lo') cur.lo = parseInt((v.match(/\d+/) || [0])[0], 10) || 0; else if (k === 'lvl') cur.lvl = normLevel(v); else if (k === 'tier') cur.tier = normTier(v); else if (k === 'opts') cur.opts = normOpts(v); else cur[k] = v; last = k === 'lo' || k === 'lvl' || k === 'tier' ? null : k; continue; }
+    if (m && map[m[1].toLowerCase()] === 'type') { const t = normType(m[2]); if (cur && !cur.q) cur.type = t; else pendingType = t; last = null; continue; }
+    if (m && /^(question|q)$/i.test(m[1])) { if (!cur || cur.q) { cur = newQ(); qs.push(cur); if (pendingType) { cur.type = pendingType; pendingType = ''; } } cur.q = m[2].trim(); last = 'q'; continue; }
+    if (!m) { const h = line.match(headRe); if (h) { cur = newQ(); qs.push(cur); if (pendingType) { cur.type = pendingType; pendingType = ''; } if (h[1]) { cur.q = h[1].trim(); last = 'q'; } else last = null; continue; } }
+    if (m && cur) { const k = map[m[1].toLowerCase()], v = m[2].trim(); if (k === 'lo') cur.lo = parseInt((v.match(/\d+/) || [0])[0], 10) || 0; else if (k === 'lvl') cur.lvl = normLevel(v); else if (k === 'tier') cur.tier = normTier(v); else if (k === 'opts') cur.opts = v; else if (k === 'imgd') cur.imgd = /^(none|no|n\/a|-|—)\.?$/i.test(v) ? '' : v; else cur[k] = v; last = k === 'lo' || k === 'lvl' || k === 'tier' ? null : k; continue; }
     if (cur && last) cur[last] += (cur[last] ? '\n' : '') + line.trim();
   }
-  return qs.filter(q => q.q.trim()).map(q => { q.a = q.a.replace(/\*\*/g, ''); q.q = q.q.replace(/\*\*/g, ''); return q; });
+  return qs.filter(q => q.q.trim()).map(q => {
+    q.a = q.a.replace(/\*\*/g, ''); q.q = q.q.replace(/\*\*/g, '');
+    if (!q.type && String(q.opts || '').trim()) q.type = 'mcq';
+    if (q.type === 'mcq' || q.type === 'order') q.opts = normOpts(q.opts);
+    if (q.type === 'tf') { q.opts = ''; q.a = /^\s*t/i.test(q.a) ? 'True' : /^\s*f/i.test(q.a) ? 'False' : q.a; }
+    if (q.type === 'fill') q.opts = '';
+    return q;
+  });
 }
 function splitByLO(text, nLO) {
   const lines = String(text || '').replace(/\r/g, '').split('\n'); const blocks = {}; let cur = null;
@@ -739,13 +786,13 @@ function analyse(l, s) {
   all.forEach(q => { if (lv[q.lvl] != null) lv[q.lvl]++; else untagged++; });
   const tagged = lv.Knowing + lv.Applying + lv.Reasoning;
   const pct = k => tagged ? Math.round(lv[k] * 100 / tagged) : 0;
-  const noAnswer = [...s.diag.qs, ...all].filter(q => !filled(q.a)).length;
+  const noAnswer = [...s.diag.qs, ...all].filter(q => !qHasAnswer(q)).length;
   const noLO = all.filter(q => !(+q.lo >= 1 && +q.lo <= n)).length;
   const dev = tagged >= 8 ? LEVELS.some(k => Math.abs(pct(k) - targetOf(l)[k]) > 15) : null;
   const ptReq = isReq(l);
   const ptHas = PT_FIELDS.some(f => !f.hidden && filled(s.pt[f.k])) || (s.pt.procs || []).length > 0;
   const types = ['sim', 'doc', 'q'].filter(k => s.disc.types[k]);
-  return { n, pD, pE, ex, guidedOK, explOK, gexOK, all, lv, tagged, untagged, pct, noAnswer, noLO, dev, ptReq, ptHas, types, cards: (s.sum.cards || []).filter(c => filled(c.f) && filled(c.b)).length };
+  return { n, pD, pE, ex, guidedOK, explOK, gexOK, all, lv, tagged, untagged, pct, noAnswer, noLO, dev, ptReq, ptHas, types };
 }
 function hasContent(id, l, s) {
   const any = o => Object.values(o || {}).some(v => typeof v === 'string' && v.trim());
@@ -757,7 +804,7 @@ function hasContent(id, l, s) {
     case 'expl': return Object.values(s.expl).some(e => e && any(e)) || s.explP.qs.length > 0;
     case 'pt': return any(s.pt) || (s.pt.procs || []).length > 0;
     case 'exit': return s.exit.qs.length > 0;
-    case 'sum': return any(s.sum) || (s.sum.cards || []).length > 0;
+    case 'sum': return any(s.sum);
     default: return false;
   }
 }
@@ -798,7 +845,15 @@ function ctxBlock(l, s) {
   if (s.notes && s.notes.trim()) t += `\n\nTEACHER'S SOURCE NOTES (use as background; do not copy)\n${s.notes.trim()}`;
   return t;
 }
-const QFMT = (extra, optional) => `Q1\nQuestion: …\n${optional ? 'Options: A) … | B) … | C) … | D) …   (only for multiple choice; otherwise leave this line out)\n' : ''}Answer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning`;
+const QTYPE_GUIDE = `QUESTION TYPES (choose the type that fits each question and use a variety; the platform supports only these six)
+- MCQ: Options: A) … | B) … | C) … | D) …   Answer: the correct letter and option text
+- True or False: write a statement as the Question; no Options line; Answer: True or False
+- Ordering: Options: the items in the CORRECT order, separated by |   (students see them shuffled); no Answer line
+- Matching: Options: one pair per line as "left | right" (3 to 5 pairs); no Answer line
+- Drag and drop: Options: one per line as "item | target"; an extra wrong item is written "item |"; no Answer line
+- Fill in the blank: write ___ in the Question for each blank; Answer: the missing words in order, separated by ";" (use "/" between accepted alternatives)
+For a numerical or one-word answer use Fill in the blank, for example "x = ___". Use Ordering, Matching and Drag and drop only where they fit the content naturally.`;
+const QFMT = (extra) => `Q1\nType: MCQ | True or False | Ordering | Matching | Drag and drop | Fill in the blank\nQuestion: …\nOptions: … (only for the types that need them, see below)\nAnswer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning\nImage: none   (write a one-line description of the picture only if the question cannot be understood without one)\n\n${QTYPE_GUIDE}`;
 const LOFMT = n => 'LO: number of the learning objective (1 to ' + n + ')\n';
 function taskText(id, l, s) {
   const n = l.los.length;
@@ -818,7 +873,7 @@ function taskText(id, l, s) {
     case 'explP': return `TASK\nWrite the practice questions that students do right AFTER the explanation. Write ${PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${PRACTICE_MIN * n} in total), many and varied: direct, multi-step, real-context, spot-the-error, and reasoning questions (explain, justify, compare).\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier.\n- Solve every question first and check each answer.`;
     case 'pt': return l.sub === 'Science' ? `TASK\nWrite ONE performance task in the style of PISA scientific literacy: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must explain the phenomenon scientifically, evaluate or design a scientific enquiry, and interpret data and evidence. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers and the scientific reasoning\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Explaining phenomena, Evaluating and designing enquiry, Interpreting data and evidence\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, use of evidence and explanation.\n- Any practical part must be safe and use school-laboratory-safe materials.\n- Work out the task fully before writing the model solution.` : `TASK\nWrite ONE performance task in the style of PISA: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must formulate the situation mathematically, use the mathematics of this lesson, and then interpret and evaluate the result. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Formulating, Employing, Interpreting, Reasoning\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, method and explanation.\n- Solve the task fully before writing the model solution.`;
     case 'exit': return `TASK\nWrite an exit ticket with exactly 2 questions for EACH learning objective (${2 * n} questions in total). Each takes less than 2 minutes. For every objective, one question is Knowing or Applying and the other is Applying or Reasoning.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n), true)}\n\nCONSTRAINTS\n- Short answers; no multi-page tasks.\n- Solve every question first and check each answer.`;
-    case 'sum': return `TASK\nWrite a revision summary for the exam on this lesson.\n\nFORMAT\nKEY RULES\n- one rule or formula per line\nEXAM EXAMPLES\nExample 1: … Answer: …   (3 examples)\nFLASHCARDS\nFront: … | Back: …   (8 flashcards, one per line)\nMIND MAP\nCentre idea, then indented branches using two spaces per level\nCOMMON EXAM MISTAKES\n- one mistake per line\n\nCONSTRAINTS\n- Cover every learning objective.\n- Flashcards are short: a question or term on the front, a one-line answer on the back.\n- Solve every example first and check each answer.`;
+    case 'sum': return `TASK\nWrite a revision summary for the exam on this lesson.\n\nFORMAT\nKEY RULES\n- one rule or formula per line\nEXAM EXAMPLES\nExample 1: … Answer: …   (3 examples)\nMIND MAP\nCentre idea, then indented branches using two spaces per level\nCOMMON EXAM MISTAKES\n- one mistake per line\n\nCONSTRAINTS\n- Cover every learning objective.\n- Solve every example first and check each answer.`;
   }
   return '';
 }
@@ -866,9 +921,9 @@ function doParse(id) {
     note = 'Discovery filled.';
   } else {
     const defs = { hook: HOOK_FIELDS, pt: PT_FIELDS, sum: SUM_FIELDS }[id];
-    const r = parseLabelled(txt, defs); const pm = r.processes || ''; delete r.processes; const ks = Object.keys(r);
+    const r = parseLabelled(txt, defs); const pm = r.processes || ''; delete r.processes; delete r.cardsText; const ks = Object.keys(r);
     if (!ks.length) return bad('No labelled parts found. Check the labels in the layout.');
-    ks.forEach(k => { if (k === 'cardsText') { s.sum.cards = (s.sum.cards || []).concat(parseCards(r[k])); } else s[id][k] = r[k]; });
+    ks.forEach(k => { s[id][k] = r[k]; });
     if (id === 'pt' && pm) s.pt.procs = procsFor(l).filter(p => new RegExp(p.split(' ')[0], 'i').test(pm));
     note = `${ks.length} parts filled.`;
   }
@@ -974,22 +1029,32 @@ function footer(id) {
 }
 function qWarn(q, o, n) {
   const w = [];
-  if (!(q.a || '').trim()) w.push('answer missing');
+  if (!q.type) w.push('type missing');
+  if (!qHasAnswer(q)) w.push(qDerived(q) ? 'items missing' : 'answer missing');
   if (!q.lvl) w.push('level missing');
   if (o.lo && !(+q.lo >= 1 && +q.lo <= n)) w.push('objective missing');
+  if (String(q.imgd || '').trim() && !String(q.img || '').trim()) w.push('image name missing');
   return w;
 }
+function imageRow(base, o) {
+  o = o || {};
+  return `<div class="fr imgrow"><label>Image (optional)<span class="hint">If this exercise builds on a picture, write its number or name. The Word file shows a box in its place.</span></label><div class="imgin">${inp(base + '.img', o.img || '', { ph: 'Image number or name, e.g. G7-U5-L2-01' })}${inp(base + '.imgd', o.imgd || '', { ph: 'What the image shows (one line)' })}</div></div>`;
+}
 function qCard(list, i, q, o) {
-  const l = L(), n = l.los.length, warn = qWarn(q, o, n);
+  const l = L(), n = l.los.length, warn = qWarn(q, o, n), P = `${list}.qs.${i}`;
   const loOpts = l.los.map((_, k) => ({ v: k + 1, t: `LO${k + 1}` }));
+  const u = QTYPE_UI[q.type] || { q: ['Question', 'Choose the exercise type first.'], o: ['Options', 'Only for multiple choice, ordering, matching or drag and drop.'], a: ['Answer', ''] };
+  const ansCell = u.a === 'tf' ? `<div>${fieldRow('Correct answer', '', sel(`${P}.a`, q.a, ['True', 'False'], { blank: 'Choose' }))}</div>` : u.a ? `<div>${fieldRow(u.a[0], u.a[1], ta(`${P}.a`, q.a, { rows: 2 }))}</div>` : '';
+  const optCell = u.o ? `<div${ansCell ? '' : ' class="c1"'}>${fieldRow(u.o[0], u.o[1], ta(`${P}.opts`, q.opts, { rows: ansCell ? 2 : 4 }))}</div>` : '';
   return `<div class="qc"><div class="qc-h"><strong>Question ${i + 1}</strong>${warn.length ? `<span class="warn">${warn.join(' · ')}</span>` : '<span class="okk">complete</span>'}<button class="x" title="Delete question" data-act="delq" data-list="${list}" data-i="${i}">Delete</button></div>
-  <div class="qgrid"><div class="c1">${fieldRow('Question', '', ta(`${list}.qs.${i}.q`, q.q, { rows: 2 }))}</div>
-  <div>${fieldRow('Options', 'one per line, only for multiple choice', ta(`${list}.qs.${i}.opts`, q.opts, { rows: 2 }))}</div>
-  <div>${fieldRow('Answer', '', ta(`${list}.qs.${i}.a`, q.a, { rows: 2 }))}</div>
-  <div>${fieldRow('Feedback', 'hint or short explanation', ta(`${list}.qs.${i}.fb`, q.fb, { rows: 2 }))}</div>
-  <div class="mini">${o.lo ? fieldRow('Objective', '', sel(`${list}.qs.${i}.lo`, q.lo, loOpts, { num: 1, blank: 'Choose' })) : fieldRow('Prerequisite skill', '', inp(`${list}.qs.${i}.pre`, q.pre))}
-  ${fieldRow('Level', '', sel(`${list}.qs.${i}.lvl`, q.lvl, LEVELS, { blank: 'Choose' }))}
-  ${o.tier ? fieldRow('Tier', '', sel(`${list}.qs.${i}.tier`, q.tier, TIERS, { blank: 'Choose' })) : ''}</div></div></div>`;
+  <div class="qgrid"><div class="c1">${fieldRow('Exercise type', '', sel(`${P}.type`, q.type, QTYPES, { blank: 'Choose the type' }))}</div>
+  <div class="c1">${fieldRow(u.q[0], u.q[1], ta(`${P}.q`, q.q, { rows: 2 }))}</div>
+  ${optCell}${ansCell}
+  <div>${fieldRow('Feedback', 'hint or short explanation', ta(`${P}.fb`, q.fb, { rows: 2 }))}</div>
+  <div class="mini">${o.lo ? fieldRow('Objective', '', sel(`${P}.lo`, q.lo, loOpts, { num: 1, blank: 'Choose' })) : fieldRow('Prerequisite skill', '', inp(`${P}.pre`, q.pre))}
+  ${fieldRow('Level', '', sel(`${P}.lvl`, q.lvl, LEVELS, { blank: 'Choose' }))}
+  ${o.tier ? fieldRow('Tier', '', sel(`${P}.tier`, q.tier, TIERS, { blank: 'Choose' })) : ''}</div>
+  <div class="c1">${imageRow(P, q)}</div></div></div>`;
 }
 function coverageStrip(counts, min, label) {
   return `<div class="cov"><strong>${label}</strong>${counts.map((c, i) => `<span class="chip ${c >= min ? 'ok' : 'low'}">LO${i + 1}: ${c}</span>`).join('')}<span class="covn">${min === PRACTICE_MIN ? `aim for ${PRACTICE_MIN} to 6 per objective` : `minimum ${min} per objective`}</span></div>`;
@@ -1011,7 +1076,7 @@ function panelHook() { const s = LS(CUR); return tray('hook') + aiBox('hook') + 
 function panelDisc() {
   const l = L(), s = LS(CUR), d = s.disc, t = d.types, a = analyse(l, s);
   const tick = (k, lab, hint) => `<label class="tick ${t[k] ? 'on' : ''}"><input type="checkbox" data-b="disc.types.${k}" ${t[k] ? 'checked' : ''}><span><strong>${lab}</strong><small>${hint}</small></span></label>`;
-  const guided = l.los.map((o, i) => `<div class="loc"><div class="loc-h"><span class="lo-n">LO${i + 1}</span><span class="tag ${o.k === 'Core' ? 'core' : 'ext'}">${esc(o.k)}</span><span class="${a.guidedOK[i] ? 'okk' : 'warn'}">${a.guidedOK[i] ? 'has guided questions' : 'empty'}</span></div><p class="lo-x otx">${esc(o.x)}</p>${fieldRow('Guided questions', 'One question or instruction per line.', ta(`disc.guided.${i + 1}`, d.guided[i + 1] || '', { rows: 4 }))}</div>`).join('');
+  const guided = l.los.map((o, i) => `<div class="loc"><div class="loc-h"><span class="lo-n">LO${i + 1}</span><span class="tag ${o.k === 'Core' ? 'core' : 'ext'}">${esc(o.k)}</span><span class="${a.guidedOK[i] ? 'okk' : 'warn'}">${a.guidedOK[i] ? 'has guided questions' : 'empty'}</span></div><p class="lo-x otx">${esc(o.x)}</p>${fieldRow('Guided questions', 'One question or instruction per line.', ta(`disc.guided.${i + 1}`, d.guided[i + 1] || '', { rows: 4 }))}${imageRow(`disc.gimg.${i + 1}`, (d.gimg || {})[i + 1])}</div>`).join('');
   return `<h3 class="sub">Discovery activity</h3><p class="subhelp">Tick how students will discover the idea. You can tick more than one.</p>${tray('disc')}${aiBox('disc')}
   <div class="ticks">${tick('sim', 'Simulation', 'an interactive model the student changes')}${tick('doc', 'Document', 'a text, table or data set to study')}${tick('q', 'Questions', 'guided questions only')}</div>
   <div class="form">${t.sim ? `<h4>Simulation</h4>${SIM_FIELDS.map(f => fieldRow(f.label, f.hint, ta(`disc.${f.k}`, d[f.k] || '', { rows: f.rows }))).join('')}<div class="introbox">${fieldRow(SIM_INTRO.label, SIM_INTRO.hint, ta('disc.simIntro', d.simIntro || '', { rows: SIM_INTRO.rows }))}</div>` : ''}
@@ -1028,15 +1093,29 @@ function panelPT() {
 function panelExpl() {
   const l = L(), s = LS(CUR), a = analyse(l, s);
   const blocks = l.los.map((o, i) => { const e = s.expl[i + 1] || {}; const ok = a.explOK[i] && a.gexOK[i]; return `<div class="loc"><div class="loc-h"><span class="lo-n">LO${i + 1}</span><span class="tag ${o.k === 'Core' ? 'core' : 'ext'}">${esc(o.k)}</span><span class="${ok ? 'okk' : 'warn'}">${ok ? 'complete' : 'needs concept, example and guided exercises'}</span></div><p class="lo-x otx">${esc(o.x)}</p>
-  <div class="form">${EXPL_FIELDS.map(d => fieldRow(d.label, d.hint, ta(`expl.${i + 1}.${d.k}`, e[d.k] || '', { rows: d.rows }))).join('')}</div></div>`; }).join('');
+  <div class="form">${EXPL_FIELDS.map(d => fieldRow(d.label, d.hint, ta(`expl.${i + 1}.${d.k}`, e[d.k] || '', { rows: d.rows }))).join('')}</div>${imageRow(`expl.${i + 1}`, e)}</div>`; }).join('');
   return `<h3 class="sub">Explanation by objective</h3>${tray('expl')}${aiBox('expl')}${blocks}
   ${questionsBlock('explP', { title: 'Practice after explanation', help: 'Many varied questions linked to the objectives; aim for 4 to 6 per objective, including reasoning questions.' })}`;
 }
+function flashPrompt(l, s) {
+  const sm = s.sum || {};
+  const src = [sm.rules && sm.rules.trim() ? 'KEY RULES\n' + sm.rules.trim() : '', sm.examples && sm.examples.trim() ? 'EXAM EXAMPLES\n' + sm.examples.trim() : ''].filter(Boolean).join('\n\n');
+  const parts = [];
+  if (DB.inlineRules) parts.push('RULES\n' + RULES);
+  parts.push(ctxBlock(l, s));
+  if (src) parts.push('SUMMARY WRITTEN BY THE TEACHER (use it as the source)\n' + src);
+  parts.push('TASK\nWrite 8 revision flashcards for students on this lesson, covering every learning objective.\n\nFORMAT (one flashcard per line, exactly this layout)\nFront: … | Back: …\n\nCONSTRAINTS\n- The front is a short question or a term; the back is a one-line answer.\n- Cover every learning objective; no two cards test the same idea.\n- Check every answer before writing it.\n- No numbering and no extra text before or after the list.');
+  return parts.join('\n\n');
+}
+function flashTray() {
+  return `<div class="tray" style="margin-top:18px"><div class="tray-h"><strong>Flashcards</strong><span class="tray-b"><button class="btn primary" data-act="copyflash">Copy flashcards prompt</button></span></div>
+  <p class="tray-s">Flashcards are made in ChatGPT, so there is no flashcards box in the Studio. Copy this prompt and paste it into ChatGPT.</p>
+  <details><summary>Show the prompt</summary><pre>${esc(flashPrompt(L(), LS(CUR)))}</pre></details></div>`;
+}
 function panelSum() {
-  const s = LS(CUR), o = s.sum; o.cards = o.cards || [];
+  const s = LS(CUR), o = s.sum;
   const f = k => { const d = SUM_FIELDS.find(x => x.k === k); return fieldRow(d.label, d.hint, ta(`sum.${k}`, o[k] || '', { rows: d.rows })); };
-  const cards = `<div class="fr"><label>Flashcards<span class="hint">Aim for 6 to 8. Front: a question or term. Back: a short answer.</span></label><div class="cards">${o.cards.map((c, i) => `<div class="card-row"><span class="cn">${i + 1}</span>${ta(`sum.cards.${i}.f`, c.f, { rows: 2, ph: 'Front' })}${ta(`sum.cards.${i}.b`, c.b, { rows: 2, ph: 'Back' })}<button class="x" data-act="delcard" data-i="${i}">Delete</button></div>`).join('')}</div><button class="btn secondary" data-act="addcard">Add a flashcard</button><p class="count ${o.cards.length >= 6 ? 'ok' : 'low'}">${o.cards.length} flashcard${o.cards.length === 1 ? '' : 's'}</p></div>`;
-  return tray('sum') + aiBox('sum') + `<div class="form">${f('rules')}${f('examples')}${cards}${f('mindmap')}${f('mistakes')}</div>`;
+  return tray('sum') + aiBox('sum') + `<div class="form">${f('rules')}${f('examples')}${f('mindmap')}${f('mistakes')}</div>` + flashTray();
 }
 function panelCard() {
   const l = L(), s = LS(CUR), marks = marksOf(l);
@@ -1067,7 +1146,6 @@ function panelFin() {
     ['Questions are tagged Knowing, Applying or Reasoning', a.untagged === 0 && a.tagged > 0, a.untagged ? `${a.untagged} untagged` : ''],
     ['Diagnostic has 5 or 6 questions', s.diag.qs.length >= 5, `${s.diag.qs.length} questions`],
     [isReq(l) ? 'Performance task is complete (required)' : 'Performance task (optional)', isReq(l) ? (a.ptHas && ['context', 'task', 'model', 'r4', 'r3', 'r2', 'r1'].every(k => (s.pt[k] || '').trim())) : true, isReq(l) ? '' : (a.ptHas ? 'included' : 'not included')],
-    ['Summary has at least 6 flashcards', a.cards >= 6, `${a.cards} flashcards`],
   ];
   const bal = LEVELS.map(k => `<div class="brow"><span class="bl">${k}</span><span class="bbar"><i style="width:${a.pct(k)}%"></i><b style="left:${targetOf(l)[k]}%"></b></span><span class="bn">${a.pct(k)}% <small>target ${targetOf(l)[k]}%</small></span></div>`).join('');
   const p = progress(l, s), pend = CONTENT_FIELDS.filter(f => (f !== 'pt' || isReq(l)) && !s.done[f]).map(f => FIELDS.find(x => x.id === f).t);
@@ -1162,8 +1240,7 @@ function onClick(e) {
     
     case 'addq': s[t.dataset.list].qs.push(newQ()); save(); renderPanel(true); { const c = document.querySelectorAll('.qc'); if (c.length) c[c.length - 1].scrollIntoView({ block: 'center' }); } break;
     case 'delq': if (confirm('Delete this question?')) { s[t.dataset.list].qs.splice(+t.dataset.i, 1); save(); renderPanel(true); renderRail(); } break;
-    case 'addcard': s.sum.cards = s.sum.cards || []; s.sum.cards.push({ f: '', b: '' }); save(); renderPanel(true); break;
-    case 'delcard': s.sum.cards.splice(+t.dataset.i, 1); save(); renderPanel(true); renderRail(); break;
+    case 'copyflash': copyText(flashPrompt(L(), s), 'Flashcards prompt copied – paste it into ChatGPT'); break;
     case 'exportdocx': exportFull(); break;
     case 'exportzip': exportStages(); break;
     case 'savefile': saveFile(); break;
@@ -1222,7 +1299,19 @@ const D = DocxLib;
 const P = (t, o) => D.para(t, o), LN = (t, o) => D.lines(t, o), T = (r, w, o) => D.table(r, w, o);
 const H1 = (t, pbb) => P(t, { style: 'Heading1', pbb }), H2 = t => P(t, { style: 'Heading2' }), H3 = t => P(t, { style: 'Heading3' });
 const MUTE = { italic: true, color: D.MUTED };
-const qText = q => (q.q || '') + (q.opts ? '\n' + q.opts : '');
+const imgBox = (n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P('[IMAGE: ' + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
+function qCellXml(q) {
+  const tag = QTYPE_NAME[q.type] ? P(QTYPE_NAME[q.type], { italic: true, color: D.MUTED, size: 16, after: 20 }) : '';
+  let body = D.lines(q.q || '', { size: 19 });
+  if ((q.type === 'mcq' || !q.type) && q.opts) body += D.lines(q.opts, { size: 19 });
+  return tag + body + imgBox(q.img, q.imgd);
+}
+function imagesText() {
+  const s = LS(CUR), out = [], add = (where, n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); if (n || d) out.push(`${n || '(name needed)'}${d ? ' – ' + d : ''}  (${where})`); };
+  [['diag', 'Diagnostic'], ['discP', 'Discovery practice'], ['explP', 'Explanation practice'], ['exit', 'Exit ticket']].forEach(([k, lab]) => s[k].qs.forEach((q, i) => add(`${lab}, question ${i + 1}`, q.img, q.imgd)));
+  L().los.forEach((_, i) => { const g = (s.disc.gimg || {})[i + 1] || {}; add(`Discovery guided questions, LO${i + 1}`, g.img, g.imgd); const e = s.expl[i + 1] || {}; add(`Explanation guided exercises, LO${i + 1}`, e.img, e.imgd); });
+  return out.join('\n');
+}
 const loShort = t => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > 260 ? x.slice(0, 257).trimEnd() + '…' : x; };
 const loRange = n => n === 1 ? 'LO1' : `LO1–LO${n}`;
 function numbered(text) {
@@ -1232,9 +1321,9 @@ function numbered(text) {
 function qTable(qs, kind) {
   qs = qs.filter(q => [q.q, q.a, q.fb, q.opts].some(x => MathLib.normalise(String(x || '')).trim()));
   if (!qs.length) return P('No questions added.', MUTE);
-  if (kind === 'diag') return T([['#', 'Question', 'Answer', 'Feedback', 'Prerequisite', 'Level'], ...qs.map((q, i) => [String(i + 1), qText(q), q.a, q.fb, q.pre, q.lvl])], [450, 2800, 1900, 1800, 1400, 1288]);
-  if (kind === 'p') return T([['#', 'Question', 'Answer', 'Feedback', 'LO', 'Level', 'Tier'], ...qs.map((q, i) => [String(i + 1), qText(q), q.a, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl, q.tier])], [450, 2500, 2000, 1650, 650, 1200, 1188]);
-  return T([['#', 'Question', 'Answer', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), qText(q), q.a, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [500, 3000, 2000, 1800, 650, 1688]);
+  if (kind === 'diag') return T([['#', 'Question', 'Answer', 'Feedback', 'Prerequisite', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.fb, q.pre, q.lvl])], [450, 2800, 1900, 1800, 1400, 1288]);
+  if (kind === 'p') return T([['#', 'Question', 'Answer', 'Feedback', 'LO', 'Level', 'Tier'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.fb, q.lo ? 'LO' + q.lo : '', q.lvl, q.tier])], [450, 2500, 2000, 1650, 650, 1200, 1188]);
+  return T([['#', 'Question', 'Answer', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [500, 3000, 2000, 1800, 650, 1688]);
 }
 const kv = rows => T([['Part', 'Content'], ...rows.map(([k, v]) => [k, v || ''])], [2600, 7038], { labelCol: true });
 function sortByLO(qs) { return qs.map((q, i) => [q, i]).sort((a, b) => ((+a[0].lo || 99) - (+b[0].lo || 99)) || (a[1] - b[1])).map(x => x[0]); }
@@ -1251,13 +1340,13 @@ function stageBody(id, full) {
       if (t.sim) b += H2('Simulation') + kv([...SIM_FIELDS.map(d => [d.label, s.disc[d.k]]), ['Instructions for the student', s.disc.simIntro]]);
       if (t.doc) b += H2('Document') + LN(s.disc.doc || '') + P('Instructions for the student', { bold: true, color: D.NAVY, after: 40 }) + LN(s.disc.docIntro || '');
       b += H2('Guided questions');
-      l.los.forEach((o, i) => { b += H3(`Guided questions · LO${i + 1}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + numbered(s.disc.guided[i + 1]); });
+      l.los.forEach((o, i) => { b += H3(`Guided questions · LO${i + 1}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + numbered(s.disc.guided[i + 1]) + imgBox(((s.disc.gimg || {})[i + 1] || {}).img, ((s.disc.gimg || {})[i + 1] || {}).imgd); });
       b += H2(`Practice after discovery · ${s.discP.qs.length} question${s.discP.qs.length === 1 ? '' : 's'}`) + qTable(sortByLO(s.discP.qs), 'p');
       return b;
     }
     case 'expl': {
       let b = head(`Objectives ${loRange(a.n)} · ${s.explP.qs.length} practice questions`);
-      l.los.forEach((o, i) => { const e = s.expl[i + 1] || {}; b += H3(`LO${i + 1} · ${o.k}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + kv(EXPL_FIELDS.filter(d => d.k !== 'guided').map(d => [d.label, e[d.k]])) + P('Guided exercises', { bold: true, color: D.NAVY, after: 40 }) + numbered(e.guided); });
+      l.los.forEach((o, i) => { const e = s.expl[i + 1] || {}; b += H3(`LO${i + 1} · ${o.k}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + kv(EXPL_FIELDS.filter(d => d.k !== 'guided').map(d => [d.label, e[d.k]])) + P('Guided exercises', { bold: true, color: D.NAVY, after: 40 }) + numbered(e.guided) + imgBox(e.img, e.imgd); });
       b += H2(`Practice after explanation · ${s.explP.qs.length} question${s.explP.qs.length === 1 ? '' : 's'}`) + qTable(sortByLO(s.explP.qs), 'p');
       return b;
     }
@@ -1268,8 +1357,7 @@ function stageBody(id, full) {
     }
     case 'exit': return head(`${s.exit.qs.length} question${s.exit.qs.length === 1 ? '' : 's'} · Objectives ${loRange(a.n)}`) + qTable(sortByLO(s.exit.qs), 'x');
     case 'sum': {
-      const cards = (s.sum.cards || []).filter(c => (c.f || '').trim() || (c.b || '').trim());
-      return head('Revision') + H2('Key rules') + LN(s.sum.rules || '') + H2('Exam examples') + LN(s.sum.examples || '') + H2('Flashcards') + (cards.length ? T([['#', 'Front', 'Back'], ...cards.map((c, i) => [String(i + 1), c.f, c.b])], [600, 4200, 4838]) : P('No flashcards added.', MUTE)) + H2('Mind map (outline)') + LN(s.sum.mindmap || '', { font: 'Courier New', size: 18 }) + H2('Common exam mistakes') + LN(s.sum.mistakes || '');
+      return head('Revision') + H2('Key rules') + LN(s.sum.rules || '') + H2('Exam examples') + LN(s.sum.examples || '') + H2('Mind map (outline)') + LN(s.sum.mindmap || '', { font: 'Courier New', size: 18 }) + H2('Common exam mistakes') + LN(s.sum.mistakes || '');
     }
   }
   return '';
@@ -1278,14 +1366,14 @@ function coverBody() {
   const l = L(), s = LS(CUR), p = progress(l, s);
   return P('Lesson production document', { style: 'Title' }) + P(`${l.id} · ${l.t}`, { style: 'Subtitle' }) +
     T([['Item', 'Detail'], ['Subject', l.sub], ['Grade', String(l.g)], ['Unit', `${l.u} – ${l.un}`], ['Lesson', `${l.l} – ${l.t}`], ['Lesson ID', l.id], ['ADEK topic', l.topic], ['ADEK standard code', l.code || ''], ['Lesson type', l.role], ['ADEK priority', l.pri || ''], ['TIMSS / PISA marks', marksOf(l).join('\n') || 'None'], ['Performance task', l.pt], ['Author', s.author || ''], ['Exported', new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })], ['Delivery window', l.win], ['Standards version', stdOf(l)], ['Grade assignment', l.prov ? 'Provisional' : 'Confirmed'], ['Status', `${p.done} of ${p.total} required sections marked as finished`]], [2600, 7038], { labelCol: true }) +
-    H2('Stages in platform order') + T([['Stage', 'Content'], ...STAGES.map(x => [`${x.n} · ${x.t}`, { card: 'Objectives and notes', diag: 'Prerequisite questions', hook: 'Real-life opening', disc: 'Activity, guided questions, practice', expl: 'Explanation, guided exercises, practice', pt: 'Real-life task and rubric', exit: 'Exit questions', sum: 'Rules, examples, flashcards, mind map' }[x.id]])], [3000, 6638]);
+    H2('Stages in platform order') + T([['Stage', 'Content'], ...STAGES.map(x => [`${x.n} · ${x.t}`, { card: 'Objectives and notes', diag: 'Prerequisite questions', hook: 'Real-life opening', disc: 'Activity, guided questions, practice', expl: 'Explanation, guided exercises, practice', pt: 'Real-life task and rubric', exit: 'Exit questions', sum: 'Rules, examples, mind map' }[x.id]])], [3000, 6638]);
 }
 function appendixBody() {
   const l = L(), s = LS(CUR), a = analyse(l, s);
   let b = H1('Appendix A – Checks', true) + H2('Coverage by objective') + T([['LO', 'Guided (discovery)', 'Practice (discovery)', 'Explanation', 'Guided exercises', 'Practice (explanation)', 'Exit'], ...l.los.map((o, i) => [`LO${i + 1}`, a.guidedOK[i] ? 'Yes' : 'No', String(a.pD[i]), a.explOK[i] ? 'Yes' : 'No', a.gexOK[i] ? 'Yes' : 'No', String(a.pE[i]), String(a.ex[i])])], [800, 1400, 1500, 1300, 1400, 1700, 1538]);
   b += H2('Cognitive balance (both practice sets and exit ticket)') + T([['Level', 'Questions', 'Share', 'Target'], ...LEVELS.map(k => [k, String(a.lv[k]), a.pct(k) + '%', targetOf(l)[k] + '%']), ['Untagged', String(a.untagged), '', '']], [2800, 2200, 2200, 2438]);
   b += H2('Author checklist') + LN(MANUAL.map(([k, t]) => (s.self[k] ? '☑ ' : '☐ ') + t).join('\n'));
-  b += H1('Appendix B – For the production team', true) + T([['Item', 'Notes'], ['Simulation notes', ''], ['Images and assets needed', ''], ['Open questions for the author', '']], [2600, 7038], { labelCol: true });
+  b += H1('Appendix B – For the production team', true) + T([['Item', 'Notes'], ['Simulation notes', ''], ['Images and assets needed', imagesText()], ['Open questions for the author', '']], [2600, 7038], { labelCol: true });
   return b;
 }
 const footerText = l => `ADEK ${l.sub} · ${l.id} · ${l.t}`;
@@ -1297,7 +1385,16 @@ function exportFull() {
   download(safeName(l, 'FULL_' + l.t.slice(0, 40)) + '.docx', [bytes], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
   toast('Word file exported');
 }
-const optQ = q => ({ question: q.q, options: q.opts ? q.opts.split('\n').filter(Boolean) : [], answer: q.a, feedback: q.fb, objective: q.lo ? 'LO' + q.lo : null, level: q.lvl || null, tier: q.tier || null, prerequisite: q.pre || null });
+const imgJ = o => (o && (String(o.img || '').trim() || String(o.imgd || '').trim())) ? { id: String(o.img || '').trim(), description: String(o.imgd || '').trim() } : null;
+const optQ = q => {
+  const o = { type: QTYPE_JSON[q.type] || null, question: q.q };
+  if (q.type === 'order') o.correctOrder = qLines(q.opts);
+  else if (q.type === 'match') o.pairs = qPairs(q.opts).map(([left, right]) => ({ left, right }));
+  else if (q.type === 'dnd') { o.items = qPairs(q.opts).filter(p => p[1]).map(([item, target]) => ({ item, target })); o.extraItems = qPairs(q.opts).filter(p => !p[1]).map(p => p[0]); }
+  else if (q.type === 'fill') { o.text = q.q; o.blanks = String(q.a || '').split(';').map(x => x.trim()).filter(Boolean).map(x => x.split('/').map(y => y.trim()).filter(Boolean)); }
+  else { o.options = q.opts ? q.opts.split('\n').filter(Boolean) : []; o.answer = q.a; }
+  return Object.assign(o, { feedback: q.fb, objective: q.lo ? 'LO' + q.lo : null, level: q.lvl || null, tier: q.tier || null, prerequisite: q.pre || null, image: imgJ(q) });
+};
 const lines = t => String(t || '').split('\n').map(x => x.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').trim()).filter(Boolean);
 function structureJSON() {
   const l = L(), s = LS(CUR), t = s.disc.types;
@@ -1310,11 +1407,11 @@ function structureJSON() {
       { order: 1, id: 'lesson-card', notes: s.notes },
       { order: 2, id: 'diagnostic', questions: s.diag.qs.map(optQ) },
       { order: 3, id: 'warm-up', scenario: s.hook.scenario || '', openingQuestion: s.hook.question || '', possibleResponses: s.hook.responses || '', link: s.hook.link || '' },
-      { order: 4, id: 'discovery', types: ['sim', 'doc', 'q'].filter(k => t[k]).map(k => ({ sim: 'simulation', doc: 'document', q: 'questions' }[k])), simulation: t.sim ? { ...Object.fromEntries(SIM_FIELDS.map(d => [d.k, s.disc[d.k] || ''])), studentInstructions: s.disc.simIntro || '' } : null, document: t.doc ? { text: s.disc.doc || '', studentInstructions: s.disc.docIntro || '' } : null, guidedQuestions: l.los.map((o, i) => ({ objective: 'LO' + (i + 1), items: lines(s.disc.guided[i + 1]) })), practice: sortByLO(s.discP.qs).map(optQ) },
-      { order: 5, id: 'explanation', objectives: l.los.map((o, i) => { const e = s.expl[i + 1] || {}; return { objective: 'LO' + (i + 1), concept: e.concept || '', workedExample: e.example || '', commonMistake: e.mistake || '', guidedExercises: lines(e.guided) }; }), practice: sortByLO(s.explP.qs).map(optQ) },
+      { order: 4, id: 'discovery', types: ['sim', 'doc', 'q'].filter(k => t[k]).map(k => ({ sim: 'simulation', doc: 'document', q: 'questions' }[k])), simulation: t.sim ? { ...Object.fromEntries(SIM_FIELDS.map(d => [d.k, s.disc[d.k] || ''])), studentInstructions: s.disc.simIntro || '' } : null, document: t.doc ? { text: s.disc.doc || '', studentInstructions: s.disc.docIntro || '' } : null, guidedQuestions: l.los.map((o, i) => ({ objective: 'LO' + (i + 1), items: lines(s.disc.guided[i + 1]), image: imgJ((s.disc.gimg || {})[i + 1]) })), practice: sortByLO(s.discP.qs).map(optQ) },
+      { order: 5, id: 'explanation', objectives: l.los.map((o, i) => { const e = s.expl[i + 1] || {}; return { objective: 'LO' + (i + 1), concept: e.concept || '', workedExample: e.example || '', commonMistake: e.mistake || '', guidedExercises: lines(e.guided), image: imgJ(e) }; }), practice: sortByLO(s.explP.qs).map(optQ) },
       { order: 6, id: 'performance-task', included: analyse(l, s).ptHas, task: analyse(l, s).ptHas ? { title: s.pt.title || '', context: s.pt.context || '', task: s.pt.task || '', product: s.pt.product || '', modelSolution: s.pt.model || '', rubric: { level4: s.pt.r4 || '', level3: s.pt.r3 || '', level2: s.pt.r2 || '', level1: s.pt.r1 || '' }, processes: s.pt.procs || [] } : null },
       { order: 7, id: 'exit-ticket', questions: sortByLO(s.exit.qs).map(optQ) },
-      { order: 8, id: 'summary', keyRules: lines(s.sum.rules), examples: lines(s.sum.examples), flashcards: (s.sum.cards || []).map(c => ({ front: c.f, back: c.b })), mindMap: s.sum.mindmap || '', commonMistakes: lines(s.sum.mistakes) },
+      { order: 8, id: 'summary', keyRules: lines(s.sum.rules), examples: lines(s.sum.examples), mindMap: s.sum.mindmap || '', commonMistakes: lines(s.sum.mistakes) },
     ],
   });
 }
