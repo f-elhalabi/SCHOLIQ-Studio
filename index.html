@@ -94,7 +94,7 @@ pre{white-space:pre-wrap;font:12.5px/1.5 ui-monospace,Consolas,monospace;backgro
 .lo-n{font-weight:800;color:var(--navy)}.lo-x{margin:0 0 10px;color:var(--mut)}
 .checks{display:flex;gap:16px;flex-wrap:wrap;margin-top:6px}
 .chk{display:flex;align-items:flex-start;gap:9px;font-weight:500}.chk input{margin-top:4px;width:17px;height:17px;accent-color:var(--navy);flex:none}
-.cards{display:grid;gap:10px;margin:8px 0}.card-row{display:grid;grid-template-columns:24px 1fr 1fr auto;gap:10px;align-items:start}.cn{color:var(--mut);padding-top:14px;font-weight:700}
+.cards{display:grid;gap:10px;margin:8px 0}.card-row{display:grid;grid-template-columns:24px 1fr 1fr auto;gap:10px;align-items:start}.cn{color:var(--mut);padding-top:14px;font-weight:700}.card-head{font-size:13px;color:var(--mut)}.card-row textarea{width:100%}.fc-h{margin:26px 0 10px}
 .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:14px}
 .facts div{background:var(--bg);border-radius:9px;padding:10px 12px}.facts span{display:block;font-size:12px;color:var(--mut)}.facts strong{font-weight:600;font-size:14px}
 .banner{background:var(--soft);border-radius:9px;padding:10px 14px;color:var(--navy);font-size:13.5px;margin:0 0 14px}
@@ -557,7 +557,8 @@ const isReq = l => l.pt === 'Required' || l.pt === 'Recommended';
 const TIERS = ['Basic', 'Fluency', 'Applied'];
 const PROCS_BY = { Mathematics: ['Formulating', 'Employing', 'Interpreting', 'Reasoning'], Science: ['Explaining phenomena', 'Evaluating and designing enquiry', 'Interpreting data and evidence'] };
 const procsFor = l => PROCS_BY[l.sub] || PROCS_BY.Mathematics;
-const PRACTICE_MIN = 4, EXIT_MIN = 2;
+const EXIT_MIN = 2;
+const discN = l => isEss(l) ? 2 : 1, explN = l => isEss(l) ? 3 : 2, exitN = l => isEss(l) ? 3 : EXIT_MIN;
 const STD_VERSION = 'ADEK Core Standards – Mathematics v1.2 (10 Nov 2026, draft)';
 const SCI_VERSION = 'ACS Sciences G1-10 Mapping – provisional grade allocation and segmentation (13 Nov 2026), specialist approval required';
 const marksOf = l => { const a = [...new Set([l.tim, l.pis, ...(l.pdfm || []).filter(x => !/not individually distinguished/i.test(x))].filter(Boolean))]; return a.filter((x, i) => !a.some((y, j) => j !== i && y.length > x.length && y.includes(x))); };
@@ -767,11 +768,20 @@ function parseExplanation(text, nLO) {
 function cleanLines(t) { return String(t || '').split('\n').map(x => x.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/\*\*/g, '').trim()).filter(Boolean).join('\n'); }
 function parseCards(text) {
   const cards = [];
-  String(text || '').split('\n').forEach(ln => {
-    const l = ln.replace(/^\s*(?:[-*]|\d+[.)])\s*/, '').trim(); if (!l) return;
-    let m = l.match(/Front\s*:\s*(.*?)\s*\|\s*Back\s*:\s*(.*)$/i);
-    if (m) cards.push({ f: m[1].trim(), b: m[2].trim() });
-    else if ((m = l.split('|')).length === 2) cards.push({ f: m[0].replace(/^Front\s*:\s*/i, '').trim(), b: m[1].replace(/^Back\s*:\s*/i, '').trim() });
+  String(text || '').replace(/<br\s*\/?>/gi, ' ').split('\n').forEach(ln => {
+    let l = ln.trim(); if (!l) return;
+    if (/^[\s|:-]+$/.test(l) && l.includes('-')) return;            // markdown separator row
+    l = l.replace(/^\s*(?:[-*•]|\d+[.)])\s+(?=.*[|\t])/, '');
+    let cells;
+    if (l.includes('\t')) cells = l.split('\t');
+    else if (l.includes('|')) cells = l.replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/);
+    else return;
+    cells = cells.map(c => c.replace(/\*\*/g, '').trim());
+    if (cells.length >= 3 && /^(\d+|#|No\.?)$/i.test(cells[0])) cells.shift();
+    if (cells.length < 2) return;
+    const f = cells[0].replace(/^Front\s*:\s*/i, '').trim(), b = cells.slice(1).join(' | ').replace(/^Back\s*:\s*/i, '').trim();
+    if (/^(front|question|term)$/i.test(f) && /^(back|answer|definition)$/i.test(b)) return;   // header row
+    if (f && b) cards.push({ f, b });
   });
   return cards;
 }
@@ -844,7 +854,8 @@ Rules that apply to every answer:
 13. UDL: minimise unnecessary language and cognitive barriers; use different representations and accessible alternatives when useful. Do not assign fixed learning styles.
 14. Self-paced design: instructions must be understandable without a teacher present; supply actionable feedback and a suggested next step, without promising adaptive programming.
 15. Pre-programming output: describe the intended student actions, observations, feedback and visual assets only; do not write HTML, JavaScript or claim the interaction already functions.
-16. Scientific and mathematical integrity: avoid unsupported claims, check edge cases and counterexamples, and make distractors diagnostically meaningful.`;
+16. Scientific and mathematical integrity: avoid unsupported claims, check edge cases and counterexamples, and make distractors diagnostically meaningful.
+17. Simulations: a simulation may be specified only in the Discovery stage, and only when the prompt asks for one. Never propose or describe a simulation in any other stage; use a picture described in words instead.`;
 
 function ctxBlock(l, s) {
   const los = l.los.map((o, i) => `LO${i + 1} [${o.k}] ${o.x}`).join('\n');
@@ -865,13 +876,13 @@ const QTYPE_GUIDE = `QUESTION TYPES (choose the type that fits each question and
 - Drag and drop: Options: one per line as "item | target"; an extra wrong item is written "item |"; no Answer line
 - Fill in the blank: write ___ in the Question for each blank; Answer: the missing words in order, separated by ";" (use "/" between accepted alternatives)
 For a numerical or one-word answer use Fill in the blank, for example "x = ___". Use Ordering, Matching and Drag and drop only where they fit the content naturally.`;
-const QFMT = (extra) => `Q1\nType: MCQ | True or False | Ordering | Matching | Drag and drop | Fill in the blank\nQuestion: …\nOptions: … (only for the types that need them, see below)\nAnswer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning\nImage: none   (write a one-line description of the picture or simulation only if the question cannot be understood without one)\n\n${QTYPE_GUIDE}`;
+const QFMT = (extra) => `Q1\nType: MCQ | True or False | Ordering | Matching | Drag and drop | Fill in the blank\nQuestion: …\nOptions: … (only for the types that need them, see below)\nAnswer: …\nFeedback: a short hint or explanation for a student who answers wrongly\n${extra}Level: Knowing | Applying | Reasoning\nImage: none   (write a one-line description of the picture only if the question cannot be understood without one)\n\n${QTYPE_GUIDE}`;
 const LOFMT = n => 'LO: number of the learning objective (1 to ' + n + ')\n';
 function taskText(id, l, s) {
   const n = l.los.length;
   switch (id) {
     case 'diag': return `TASK\nCreate a SHORT diagnostic for a learner who has ALREADY encountered this lesson in class but may have incomplete understanding. Assess BOTH essential prior knowledge AND understanding of the CURRENT lesson objectives. This is a formative entry check, not a high-stakes exam.\n\nExactly 6 questions: normally 2 essential prior-knowledge questions and 4 current-lesson questions. Adjust to 1+5 or 3+3 ONLY when the objectives demand it. Current-lesson items should sample distinct ideas and misconceptions; prioritise Core objectives and sample remaining objectives as possible within six items. Do not pretend all objectives are fully assessed if the six items cannot cover them. Order from accessible retrieval to application or misconception reasoning, not only from oldest to newest content.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT('Prerequisite: PRIOR – skill and source grade/lesson, or CURRENT – LO number and concept being checked\n', true)}\n\nCONSTRAINTS\n- Exactly 6 questions; at most 2 multiple choice.\n- Each question checks one identifiable skill or concept.\n- For CURRENT items, refer to a lesson concept that the student has already encountered in class, without giving the answer away.\n- Include at least one diagnostic distractor/counterexample or error-analysis question when suited to the subject.\n- The Feedback must briefly explain the likely misconception AND give a next review step or hint.\n- No grading language or assumption of mastery; no full lesson explanation inside the questions.\n- Solve and verify every answer before writing it.`;
-    case 'hook': return `TASK\nWrite a 2–3 minute warm-up / hook for a student who has previously met this topic in class. Reactivate that learning and create a specific conceptual puzzle, prediction, surprising result or authentic decision that is resolved through this lesson. It is NOT a decorative UAE introduction or a second diagnostic test.\n\nFORMAT\nScenario: …\nOpening question: …\nPossible student responses: …\nLink to the lesson: …\n\nCONSTRAINTS\n- Scenario: at most 4 short sentences; an authentic Abu Dhabi/UAE connection only where it changes the reasoning meaningfully.\n- The opening question may draw on an already-taught current-lesson concept and MUST be answerable as a prediction or reasoned attempt before this digital review.\n- Include at least two plausible contrasting responses, including a diagnostic misconception when appropriate.\n- Preserve intellectual curiosity: do not reveal the rule or correct the misconception in the scenario or link.\n- Explicitly lead to the central conceptual understanding or LO1, without artificially restricting the whole hook to LO1.\n- No need to invent a separate image or simulation unless it is genuinely needed.`;
+    case 'hook': return `TASK\nWrite a 2–3 minute warm-up / hook for a student who has previously met this topic in class. Reactivate that learning and create a specific conceptual puzzle, prediction, surprising result or authentic decision that is resolved through this lesson. It is NOT a decorative UAE introduction or a second diagnostic test.\n\nFORMAT\nScenario: …\nOpening question: …\nPossible student responses: …\nLink to the lesson: …\n\nCONSTRAINTS\n- Scenario: at most 4 short sentences; an authentic Abu Dhabi/UAE connection only where it changes the reasoning meaningfully.\n- The opening question may draw on an already-taught current-lesson concept and MUST be answerable as a prediction or reasoned attempt before this digital review.\n- Include at least two plausible contrasting responses, including a diagnostic misconception when appropriate.\n- Preserve intellectual curiosity: do not reveal the rule or correct the misconception in the scenario or link.\n- Explicitly lead to the central conceptual understanding or LO1, without artificially restricting the whole hook to LO1.\n- Do not propose a simulation here. Add a picture only if it is genuinely needed.`;
     case 'disc': {
       const t = s.disc.types, parts = [], fmt = [];
       if (t.sim) { parts.push('ONE simple conceptual interaction SPECIFICATION (not code) that lets learners predict, vary, observe and check a key idea already introduced in class'); fmt.push('SIMULATION\nQuestion to investigate: …\nWhat the student can change: … (at most 2 controls, with their ranges)\nWhat the student should notice: …\nRule the student states: …\nSuggested visual: … (2–3 sentences describing the picture or graph)\nSimulation instructions: … (student-facing action sequence: predict, adjust, compare, explain; describe useful feedback)'); }
@@ -880,9 +891,9 @@ function taskText(id, l, s) {
       fmt.push('GUIDED QUESTIONS\nLO1\n1. …\n2. …\nLO2\n1. …\n(one question or instruction per line, for every learning objective LO1 to LO' + n + ')');
       return `TASK\nDesign a guided RE-DISCOVERY / conceptual consolidation stage, suitable for independent review AFTER classroom teaching. Learners should retrieve what they remember, make a prediction, examine examples and counterexamples, notice a pattern or mechanism, and articulate or revise a rule. Write: ${parts.join('; ')}.\n\nFORMAT\n${fmt.join('\n')}\n\nCONSTRAINTS\n- Do not assume this is first exposure; do not merely repeat the teacher's explanation or ask recall-only questions.\n- Guided questions: 3–5 per objective, progressing through recall/prediction, evidence/contrast, explanation and generalisation.\n- Use revealing counterexamples and misconceptions where appropriate; make exceptional cases clear.\n- Provide sufficient evidence and scaffolding for students to reason independently, but DO NOT simply announce the rule before the investigation.\n- For a visual or simulated model, specify learner action, expected observable result and feedback; no code or actual interaction.\n- When the subject or objective does not suit simulation, use a question sequence or evidence document rather than an artificial simulation.\n- Use short, clear, self-paced student instructions.`;
     }
-    case 'discP': return `TASK\nWrite the practice questions that students do right AFTER the discovery stage. They test and consolidate ideas learners have just revisited in guided discovery, before the explanation refresher; use only reasoning and ideas supported by discovery or previous classroom exposure. Write ${isEss(l) ? 5 : PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${(isEss(l) ? 5 : PRACTICE_MIN) * n} in total), varied: direct, multi-step, real-context, spot-the-error and reasoning questions.\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier only where authentic; include misconception-based feedback and avoid unnecessary reading load.\n- Solve every question first and check each answer.`;
+    case 'discP': return `TASK\nWrite the practice questions that students do right AFTER the discovery stage. They test and consolidate ideas learners have just revisited in guided discovery, before the explanation refresher; use only reasoning and ideas supported by discovery or previous classroom exposure. Write exactly ${discN(l)} question${discN(l) > 1 ? 's' : ''} for EACH learning objective (${discN(l) * n} in total). ${isEss(l) ? 'Make one a direct or multi-step question and the other a real-context, spot-the-error or reasoning question.' : 'Choose the question that best consolidates that objective: direct, multi-step, real-context, spot-the-error or reasoning.'}\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Write exactly ${discN(l)} per objective, no more and no fewer.\n- Vary tier (Basic, Fluency, Applied) and level across the set as far as the number of questions allows; over the whole lesson the target mix is about ${mixText(l)}.\n- Use UAE contexts in the Applied tier only where authentic; include misconception-based feedback and avoid unnecessary reading load.\n- Solve every question first and check each answer.`;
     case 'expl': return `TASK\nFor EACH learning objective (LO1 to LO${n}), write a concise explanatory REFRESHER for students who have met this in class but may not yet understand it securely. Connect examples to underlying reasoning and repair likely misconceptions; never assume recall equals mastery.\n\nFORMAT (repeat for each objective, in order)\nLO1\nConcept: 3–5 short sentences, then the rule in one line.\nWorked example: numbered steps, ending with the final answer.\nCommon mistake: the mistake students make and how to avoid it.\nGuided exercises: 3–4 exercises, one per line, from easy to harder, each with its answer in brackets.\n\nCONSTRAINTS\n- Write LO1, LO2 … as headings, exactly as shown.\n- Use different representations where they remove learning barriers (words, numbers, a table described in words, a diagram described in words). Keep the explanation self-contained for independent use.\n- After explaining each concept, make the guided exercises test an immediate understanding or error correction; provide accurate answers and concise learner-facing hints.\n- Solve every example and exercise before writing it.`;
-    case 'explP': return `TASK\nWrite the practice questions that students do right AFTER the explanation. Write ${isEss(l) ? 5 : PRACTICE_MIN} to 6 questions for EACH learning objective (at least ${(isEss(l) ? 5 : PRACTICE_MIN) * n} in total), many and varied: direct, multi-step, real-context, spot-the-error, and reasoning questions (explain, justify, compare).\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Mix the tiers: about 40% Basic, 35% Fluency, 25% Applied.\n- Aim for about ${mixText(l)} overall.\n- Use UAE contexts in the Applied tier only where authentic; include misconception-based feedback and avoid unnecessary reading load.\n- Solve every question first and check each answer.`;
+    case 'explP': return `TASK\nWrite the practice questions that students do right AFTER the explanation. Write exactly ${explN(l)} questions for EACH learning objective (${explN(l) * n} in total). ${isEss(l) ? 'For each objective, one question tests the skill directly, one applies it in a context or spot-the-error situation, and one asks for reasoning (explain, justify, compare).' : 'For each objective, one question tests the skill directly and the other applies it in a context or asks for reasoning (explain, justify, compare).'}\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n) + 'Tier: Basic | Fluency | Applied\n', true)}\n\nCONSTRAINTS\n- Write exactly ${explN(l)} per objective, no more and no fewer.\n- Vary tier (Basic, Fluency, Applied) and level across the set as far as the number of questions allows; over the whole lesson the target mix is about ${mixText(l)}.\n- Use UAE contexts in the Applied tier only where authentic; include misconception-based feedback and avoid unnecessary reading load.\n- Solve every question first and check each answer.`;
     case 'pt': return l.sub === 'Science' ? `TASK\nWrite ONE performance task in the style of PISA scientific literacy: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must explain the phenomenon scientifically, evaluate or design a scientific enquiry, and interpret data and evidence. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers and the scientific reasoning\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Explaining phenomena, Evaluating and designing enquiry, Interpreting data and evidence\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, use of evidence and explanation.\n- Any practical part must be safe and use school-laboratory-safe materials.\n- Work out the task fully before writing the model solution.` : `TASK\nWrite ONE performance task in the style of PISA: a real-life situation from Abu Dhabi or the UAE that needs several steps. Students must formulate the situation mathematically, use the mathematics of this lesson, and then interpret and evaluate the result. It should take 15–20 minutes.\n\nFORMAT\nTitle: …\nContext: …\nTask: numbered parts a), b), c) …\nProduct: what the student must produce\nModel solution: step by step, with final answers\nLevel 4 (Excellent): one sentence\nLevel 3 (Secure): one sentence\nLevel 2 (Developing): one sentence\nLevel 1 (Beginning): one sentence\nProcesses: list those used – Formulating, Employing, Interpreting, Reasoning\n\nCONSTRAINTS\n- It must use at least two learning objectives.\n- The rubric judges accuracy, method and explanation.\n- Solve the task fully before writing the model solution.`;
     case 'exit': return `TASK\nWrite an exit ticket with exactly ${isEss(l) ? 3 : 2} questions for EACH learning objective (${(isEss(l) ? 3 : 2) * n} questions in total). Each takes less than 2 minutes. For every objective, ${isEss(l) ? 'one question is Knowing or Applying, one is Applying and one is Reasoning.' : 'one question is Knowing or Applying and the other is Applying or Reasoning.'}\n\nFORMAT (repeat for each question, exactly this layout)\n${QFMT(LOFMT(n), true)}\n\nCONSTRAINTS\n- Short answers; no multi-page tasks.\n- Solve every question first and check each answer.`;
     case 'sum': return `TASK\nWrite a self-paced retrieval and revision summary for this classroom-taught lesson: concise rules, when each rule applies, diagnostic misconceptions, memorable examples and a mind map. Support understanding, not just memorisation.\n\nFORMAT\nKEY RULES\n- one rule or formula per line\nEXAM EXAMPLES\nExample 1: … Answer: …   (3 examples)\nMIND MAP\nCentre idea, then indented branches using two spaces per level\nCOMMON EXAM MISTAKES\n- one mistake per line\n\nCONSTRAINTS\n- Cover every learning objective.\n- Solve every example first and check each answer.`;
@@ -893,6 +904,7 @@ function buildPrompt(id, l, s) {
   const parts = [];
   if (DB.inlineRules) parts.push('RULES\n' + RULES);
   parts.push(ctxBlock(l, s)); parts.push(taskText(id, l, s));
+  if (id !== 'disc') parts.push('SIMULATIONS\nDo not propose or describe any simulation in this stage; simulations are used only in the Discovery stage. A picture, described in words, is allowed where it is needed.');
   return parts.join('\n\n');
 }
 function notebookPrompt(l) {
@@ -904,7 +916,7 @@ function tray(id) {
   <p class="tray-s">${DB.inlineRules ? 'The shared rules are included.' : 'Uses the shared rules from your ChatGPT Project (see Setup and guide).'} Paste ChatGPT’s answer in the box below.</p>
   <details><summary>Show the prompt</summary><pre>${esc(p)}</pre></details></div>`;
 }
-const PASTE_LABEL = { diag: ['Paste the questions', 'Convert to question cards'], discP: ['Paste the questions', 'Convert to question cards'], explP: ['Paste the questions', 'Convert to question cards'], exit: ['Paste the questions', 'Convert to question cards'], disc: ['Paste the discovery activity', 'Split into fields'], expl: ['Paste the explanations', 'Split by objective'], hook: ['Paste the answer', 'Split into fields'], pt: ['Paste the task', 'Split into fields'], sum: ['Paste the summary', 'Split into fields'] };
+const PASTE_LABEL = { diag: ['Paste the questions', 'Convert to question cards'], discP: ['Paste the questions', 'Convert to question cards'], explP: ['Paste the questions', 'Convert to question cards'], exit: ['Paste the questions', 'Convert to question cards'], disc: ['Paste the discovery activity', 'Split into fields'], expl: ['Paste the explanations', 'Split by objective'], hook: ['Paste the answer', 'Split into fields'], pt: ['Paste the task', 'Split into fields'], sum: ['Paste the summary', 'Split into fields'], cards: ['Step 2 · Paste the flashcards table', 'Convert to flashcards'] };
 function aiBox(id) {
   const [label, btn] = PASTE_LABEL[id];
   return `<div class="paste"><label>${esc(label)}</label><p class="pasteh">Tip: use the Copy button under ChatGPT’s answer, not mouse selection, so the formulas are copied correctly.</p><textarea class="fit" id="paste-${id}" rows="4" placeholder="Paste ChatGPT’s answer here"></textarea><div class="paste-a"><button class="btn secondary" data-act="parse" data-f="${id}">${esc(btn)}</button><span id="pmsg-${id}" class="pmsg"></span></div></div>`;
@@ -918,6 +930,10 @@ function doParse(id) {
     const qs = parseQuestions(txt);
     if (!qs.length) return bad('No questions found. Check that the answer uses the layout “Question: … Answer: …”.');
     s[id].qs.push(...qs); note = `${qs.length} questions added.`;
+  } else if (id === 'cards') {
+    const cs = parseCards(txt);
+    if (!cs.length) return bad('No flashcards found. Check that the answer is a table with two columns: Front and Back.');
+    s.sum.cards = (s.sum.cards || []).concat(cs); note = `${cs.length} flashcards added.`;
   } else if (id === 'expl') {
     const r = parseExplanation(txt, l.los.length), ks = Object.keys(r);
     if (!ks.length) return bad('No “LO1, LO2…” headings found.');
@@ -1050,11 +1066,11 @@ function qWarn(q, o, n) {
 }
 function isEss(l) { return !!l && l.pri === 'Essential'; }
 function unitsText(l) { return l && l.sub === 'Science' ? 'Units of measurement (ADEK Working Scientifically): write every quantity with its SI unit, convert units where the question needs it, use a sensible number of significant figures, and use correct IUPAC names in chemistry. Check the unit in every answer and in every worked example.' : 'Units of measurement: write the unit with every measurement or quantity in questions and answers, check conversions (for example cm to m, minutes to hours), and show the unit in the final line of every worked example.'; }
-function essText(l) { return 'Essential lesson (assessment-critical): give it more weight than a Supporting lesson. Aim for 5 to 6 practice questions per objective after discovery and after explanation, at least 3 exit questions per objective, and include reasoning questions (explain, justify, compare).'; }
+function essText(l) { return 'Essential lesson (assessment-critical): give it more weight than a Supporting lesson. Write 2 practice questions per objective after discovery, 3 after explanation and 3 exit questions per objective, and include reasoning questions (explain, justify, compare).'; }
 function noticeBanners(l) { return `<p class="banner req">${esc(unitsText(l))}</p>${isEss(l) ? `<p class="banner req">${esc(essText(l))}</p>` : ''}`; }
 function imageRow(base, o) {
   o = o || {};
-  return `<div class="fr imgrow"><label>Image / Simulation (optional)<span class="hint">If this part builds on a picture or a simulation, write its number or name. The Word file shows a box in its place.</span></label><div class="imgin">${inp(base + '.img', o.img || '', { ph: 'Image or simulation number / name, e.g. G7-U5-L2-01' })}${inp(base + '.imgd', o.imgd || '', { ph: 'What it shows or does (one line)' })}</div></div>`;
+  return `<div class="fr imgrow"><label>${/^disc\./.test(base) ? 'Image / Simulation (optional)' : 'Image (optional)'}<span class="hint">${/^disc\./.test(base) ? 'If this part builds on a picture or a simulation, write its number or name.' : 'If this part builds on a picture, write its number or name.'} The Word file shows a box in its place.</span></label><div class="imgin">${inp(base + '.img', o.img || '', { ph: /^disc\./.test(base) ? 'Image or simulation number / name, e.g. G7-U5-L2-01' : 'Image number / name, e.g. G7-U5-L2-01' })}${inp(base + '.imgd', o.imgd || '', { ph: 'What it shows or does (one line)' })}</div></div>`;
 }
 function qCard(list, i, q, o) {
   const l = L(), n = l.los.length, warn = qWarn(q, o, n), P = `${list}.qs.${i}`;
@@ -1072,18 +1088,17 @@ function qCard(list, i, q, o) {
   ${o.tier ? fieldRow('Tier', '', sel(`${P}.tier`, q.tier, TIERS, { blank: 'Choose' })) : ''}</div>
   <div class="c1">${imageRow(P, q)}</div></div></div>`;
 }
-function coverageStrip(counts, min, label) {
-  const ess = isEss(L()), tgt = ess ? (min === PRACTICE_MIN ? 5 : 3) : min;
-  return `<div class="cov"><strong>${label}</strong>${counts.map((c, i) => `<span class="chip ${c >= tgt ? 'ok' : c >= min ? 'mid' : 'low'}">LO${i + 1}: ${c}</span>`).join('')}<span class="covn">${ess ? `Essential lesson: aim for ${min === PRACTICE_MIN ? '5 to 6' : '3'} per objective (minimum ${min})` : min === PRACTICE_MIN ? `aim for ${PRACTICE_MIN} to 6 per objective` : `minimum ${min} per objective`}</span></div>`;
+function coverageStrip(counts, tgt, label) {
+  return `<div class="cov"><strong>${label}</strong>${counts.map((c, i) => `<span class="chip ${c >= tgt ? 'ok' : c > 0 ? 'mid' : 'low'}">LO${i + 1}: ${c}</span>`).join('')}<span class="covn">${isEss(L()) ? 'Essential lesson: ' : ''}${tgt} per objective</span></div>`;
 }
 function questionsBlock(id, o) {
   const l = L(), s = LS(CUR), list = s[id], a = analyse(l, s);
   const cfg = { lo: id !== 'diag', tier: id === 'discP' || id === 'explP' };
   let notes = '';
   if (id === 'diag') notes = `<p class="count ${list.qs.length >= 5 ? 'ok' : 'low'}">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} · aim for 5 or 6</p>`;
-  if (id === 'discP') notes = coverageStrip(a.pD, PRACTICE_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
-  if (id === 'explP') notes = coverageStrip(a.pE, PRACTICE_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
-  if (id === 'exit') notes = coverageStrip(a.ex, EXIT_MIN, 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
+  if (id === 'discP') notes = coverageStrip(a.pD, discN(l), 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
+  if (id === 'explP') notes = coverageStrip(a.pE, explN(l), 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
+  if (id === 'exit') notes = coverageStrip(a.ex, exitN(l), 'Questions per objective') + `<p class="count">${list.qs.length} question${list.qs.length === 1 ? '' : 's'} in total</p>`;
   const unitsLine = id === 'diag' ? '' : `<p class="banner req">${esc(unitsText(l))}</p>`;
   return `${o && o.title ? `<h3 class="sub">${o.title}</h3>${o.help ? `<p class="subhelp">${o.help}</p>` : ''}` : ''}${tray(id)}${aiBox(id)}${unitsLine}${notes}<div>${list.qs.map((q, i) => qCard(id, i, q, cfg)).join('')}</div><button class="btn secondary" data-act="addq" data-list="${id}">Add a question</button>`;
 }
@@ -1100,7 +1115,7 @@ function panelDisc() {
   <div class="form">${t.sim ? `<h4>Simulation</h4>${SIM_FIELDS.map(f => fieldRow(f.label, f.hint, ta(`disc.${f.k}`, d[f.k] || '', { rows: f.rows }))).join('')}<div class="introbox">${fieldRow(SIM_INTRO.label, SIM_INTRO.hint, ta('disc.simIntro', d.simIntro || '', { rows: SIM_INTRO.rows }))}</div>` : ''}
   ${t.doc ? `<h4>Document</h4>${fieldRow('Document for the student', 'The text, table or data the student studies. Describe any picture in words.', ta('disc.doc', d.doc || '', { rows: 6 }))}<div class="introbox">${fieldRow(DOC_INTRO.label, DOC_INTRO.hint, ta('disc.docIntro', d.docIntro || '', { rows: DOC_INTRO.rows }))}</div>` : ''}</div>
   <h4 class="gq">Guided questions by objective</h4>${guided}
-  ${questionsBlock('discP', { title: 'Practice after discovery', help: 'Questions that consolidate what students discovered. Link each question to an objective; aim for 4 to 6 per objective, varied in tier and level.' })}`;
+  ${questionsBlock('discP', { title: 'Practice after discovery', help: 'Questions that consolidate what students discovered. Link each question to an objective: 1 per objective (2 in an Essential lesson).' })}`;
 }
 function panelPT() {
   const l = L(), s = LS(CUR);
@@ -1113,7 +1128,7 @@ function panelExpl() {
   const blocks = l.los.map((o, i) => { const e = s.expl[i + 1] || {}; const ok = a.explOK[i] && a.gexOK[i]; return `<div class="loc"><div class="loc-h"><span class="lo-n">LO${i + 1}</span><span class="tag ${o.k === 'Core' ? 'core' : 'ext'}">${esc(o.k)}</span><span class="${ok ? 'okk' : 'warn'}">${ok ? 'complete' : 'needs concept, example and guided exercises'}</span></div><p class="lo-x otx">${esc(o.x)}</p>
   <div class="form">${EXPL_FIELDS.map(d => fieldRow(d.label, d.hint, ta(`expl.${i + 1}.${d.k}`, e[d.k] || '', { rows: d.rows }))).join('')}</div>${imageRow(`expl.${i + 1}`, e)}</div>`; }).join('');
   return `<h3 class="sub">Explanation by objective</h3>${tray('expl')}${aiBox('expl')}${blocks}
-  ${questionsBlock('explP', { title: 'Practice after explanation', help: 'Many varied questions linked to the objectives; aim for 4 to 6 per objective, including reasoning questions.' })}`;
+  ${questionsBlock('explP', { title: 'Practice after explanation', help: 'Questions linked to the objectives: 2 per objective (3 in an Essential lesson), including a reasoning question.' })}`;
 }
 function flashPrompt(l, s) {
   const sm = s.sum || {};
@@ -1122,13 +1137,20 @@ function flashPrompt(l, s) {
   if (DB.inlineRules) parts.push('RULES\n' + RULES);
   parts.push(ctxBlock(l, s));
   if (src) parts.push('SUMMARY WRITTEN BY THE TEACHER (use it as the source)\n' + src);
-  parts.push('TASK\nWrite 8 revision flashcards for students on this lesson, covering every learning objective.\n\nFORMAT (one flashcard per line, exactly this layout)\nFront: … | Back: …\n\nCONSTRAINTS\n- The front is a short question or a term; the back is a one-line answer.\n- Cover every learning objective; no two cards test the same idea.\n- Check every answer before writing it.\n- No numbering and no extra text before or after the list.');
+  const cnt = Math.max(8, l.los.length);
+  parts.push(`TASK\nWrite ${cnt} revision flashcards for students on this lesson, covering every learning objective.\n\nFORMAT\nOne table with exactly two columns, headed Front and Back, and one flashcard per row. This table is the one exception to the "no tables" rule.\n\nFront | Back\n… | …\n\nCONSTRAINTS\n- The front is a short question or a term; the back is a one-line answer.\n- Cover every learning objective (at least one card each); no two cards test the same idea.\n- No numbering column. Do not use the | character inside a cell (write an absolute value as \\(\\lvert x \\rvert\\)).\n- Write every formula between \\( and \\), as in the rules.\n- Check every answer before writing it.\n- No text before or after the table.`);
   return parts.join('\n\n');
 }
 function flashTray() {
-  return `<div class="tray" style="margin-top:18px"><div class="tray-h"><strong>Flashcards</strong><span class="tray-b"><button class="btn primary" data-act="copyflash">Copy flashcards prompt</button></span></div>
-  <p class="tray-s">Flashcards are made in ChatGPT, so there is no flashcards box in the Studio. Copy this prompt and paste it into ChatGPT.</p>
-  <details><summary>Show the prompt</summary><pre>${esc(flashPrompt(L(), LS(CUR)))}</pre></details></div>`;
+  const cards = (LS(CUR).sum || {}).cards || [];
+  const rows = cards.map((c, i) => `<div class="card-row"><span class="cn">${i + 1}</span><div>${ta(`sum.cards.${i}.f`, c.f || '', { rows: 2, ph: 'Front' })}</div><div>${ta(`sum.cards.${i}.b`, c.b || '', { rows: 2, ph: 'Back' })}</div><button class="btn ghost" data-act="delcard" data-i="${i}" title="Delete this flashcard">✕</button></div>`).join('');
+  return `<h3 class="fc-h">Flashcards</h3>
+  <div class="tray"><div class="tray-h"><strong>Step 1 · Flashcards prompt</strong><span class="tray-b"><button class="btn primary" data-act="copyflash">Copy flashcards prompt</button></span></div>
+  <p class="tray-s">Copy this prompt into ChatGPT. It gives back a table with two columns, Front and Back.</p>
+  <details><summary>Show the prompt</summary><pre>${esc(flashPrompt(L(), LS(CUR)))}</pre></details></div>
+  ${aiBox('cards')}
+  <div class="cards">${cards.length ? '<div class="card-row card-head"><span></span><strong>Front</strong><strong>Back</strong><span></span></div>' + rows : '<p class="count">No flashcards yet. Paste the table above, or add a card by hand.</p>'}</div>
+  <div class="paste-a"><button class="btn secondary" data-act="addcard">+ Add a card</button><span class="count">${cards.length} flashcard${cards.length === 1 ? '' : 's'}</span></div>`;
 }
 function panelSum() {
   const s = LS(CUR), o = s.sum;
@@ -1155,10 +1177,10 @@ function panelFin() {
     ['Discovery type is chosen', a.types.length > 0, a.types.length ? a.types.map(k => ({ sim: 'Simulation', doc: 'Document', q: 'Questions' }[k])).join(' + ') : 'tick at least one'],
     ['Instructions for the student are written for the ticked simulation or document', (!s.disc.types.sim || (s.disc.simIntro || '').trim()) && (!s.disc.types.doc || (s.disc.docIntro || '').trim()), ''],
     ['Every objective has guided discovery questions', a.guidedOK.every(Boolean), a.guidedOK.map((c, i) => `LO${i + 1}:${c ? '✓' : '–'}`).join('  ')],
-    [`Practice after discovery: at least ${PRACTICE_MIN} per objective`, a.pD.every(c => c >= PRACTICE_MIN), a.pD.map((c, i) => `LO${i + 1}:${c}`).join('  ')],
+    [`Practice after discovery: ${discN(l)} per objective`, a.pD.every(c => c >= discN(l)), a.pD.map((c, i) => `LO${i + 1}:${c}`).join('  ')],
     ['Every objective has an explanation (concept and example)', a.explOK.every(Boolean), `${a.explOK.filter(Boolean).length} of ${a.n} objectives`],
     ['Every objective has guided exercises', a.gexOK.every(Boolean), `${a.gexOK.filter(Boolean).length} of ${a.n} objectives`],
-    [`Practice after explanation: at least ${PRACTICE_MIN} per objective`, a.pE.every(c => c >= PRACTICE_MIN), a.pE.map((c, i) => `LO${i + 1}:${c}`).join('  ')],
+    [`Practice after explanation: ${explN(l)} per objective`, a.pE.every(c => c >= explN(l)), a.pE.map((c, i) => `LO${i + 1}:${c}`).join('  ')],
     [`Every objective has at least ${EXIT_MIN} exit questions`, a.ex.every(c => c >= EXIT_MIN), a.ex.map((c, i) => `LO${i + 1}:${c}`).join('  ')],
     ['Every question has an answer', a.noAnswer === 0, a.noAnswer ? `${a.noAnswer} without an answer` : ''],
     ['Practice and exit questions are linked to an objective', a.noLO === 0, a.noLO ? `${a.noLO} not linked` : ''],
@@ -1259,6 +1281,8 @@ function onClick(e) {
     
     case 'addq': s[t.dataset.list].qs.push(newQ()); save(); renderPanel(true); { const c = document.querySelectorAll('.qc'); if (c.length) c[c.length - 1].scrollIntoView({ block: 'center' }); } break;
     case 'delq': if (confirm('Delete this question?')) { s[t.dataset.list].qs.splice(+t.dataset.i, 1); save(); renderPanel(true); renderRail(); } break;
+    case 'addcard': (s.sum.cards = s.sum.cards || []).push({ f: '', b: '' }); s.updated = Date.now(); save(); renderPanel(true); break;
+    case 'delcard': if (confirm('Delete this flashcard?')) { s.sum.cards.splice(+t.dataset.i, 1); s.updated = Date.now(); save(); renderPanel(true); } break;
     case 'copyflash': copyText(flashPrompt(L(), s), 'Flashcards prompt copied – paste it into ChatGPT'); break;
     case 'exportdocx': exportFull(); break;
     case 'exportzip': exportStages(); break;
@@ -1318,7 +1342,7 @@ const D = DocxLib;
 const P = (t, o) => D.para(t, o), LN = (t, o) => D.lines(t, o), T = (r, w, o) => D.table(r, w, o);
 const H1 = (t, pbb) => P(t, { style: 'Heading1', pbb }), H2 = t => P(t, { style: 'Heading2' }), H3 = t => P(t, { style: 'Heading3' });
 const MUTE = { italic: true, color: D.MUTED };
-const imgBox = (n, d) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P('[IMAGE / SIMULATION: ' + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
+const imgBox = (n, d, sim) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P((sim ? '[IMAGE / SIMULATION: ' : '[IMAGE: ') + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
 function qCellXml(q) {
   const tag = QTYPE_NAME[q.type] ? P(QTYPE_NAME[q.type], { italic: true, color: D.MUTED, size: 16, after: 20 }) : '';
   let body = D.lines(q.q || '', { size: 19 });
@@ -1360,7 +1384,7 @@ function stageBody(id, full) {
       if (t.sim) b += H2('Simulation') + kv([...SIM_FIELDS.map(d => [d.label, s.disc[d.k]]), ['Instructions for the student', s.disc.simIntro]]);
       if (t.doc) b += H2('Document') + LN(s.disc.doc || '') + P('Instructions for the student', { bold: true, color: D.NAVY, after: 40 }) + LN(s.disc.docIntro || '');
       b += H2('Guided questions');
-      l.los.forEach((o, i) => { b += H3(`Guided questions · LO${i + 1}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + numbered(s.disc.guided[i + 1]) + imgBox(((s.disc.gimg || {})[i + 1] || {}).img, ((s.disc.gimg || {})[i + 1] || {}).imgd); });
+      l.los.forEach((o, i) => { b += H3(`Guided questions · LO${i + 1}`) + P(loShort(o.x), { ...MUTE, after: 60 }) + numbered(s.disc.guided[i + 1]) + imgBox(((s.disc.gimg || {})[i + 1] || {}).img, ((s.disc.gimg || {})[i + 1] || {}).imgd, true); });
       b += H2(`Practice after discovery · ${s.discP.qs.length} question${s.discP.qs.length === 1 ? '' : 's'}`) + qTable(sortByLO(s.discP.qs), 'p');
       return b;
     }
@@ -1377,7 +1401,7 @@ function stageBody(id, full) {
     }
     case 'exit': return head(`${s.exit.qs.length} question${s.exit.qs.length === 1 ? '' : 's'} · Objectives ${loRange(a.n)}`) + qTable(sortByLO(s.exit.qs), 'x');
     case 'sum': {
-      return head('Revision') + H2('Key rules') + LN(s.sum.rules || '') + H2('Exam examples') + LN(s.sum.examples || '') + H2('Mind map (outline)') + LN(s.sum.mindmap || '', { font: 'Courier New', size: 18 }) + H2('Common exam mistakes') + LN(s.sum.mistakes || '');
+      return head('Revision') + H2('Key rules') + LN(s.sum.rules || '') + H2('Exam examples') + LN(s.sum.examples || '') + H2('Mind map (outline)') + LN(s.sum.mindmap || '', { font: 'Courier New', size: 18 }) + H2('Common exam mistakes') + LN(s.sum.mistakes || '') + ((s.sum.cards || []).length ? H2(`Flashcards · ${s.sum.cards.length}`) + T([['#', 'Front', 'Back'], ...s.sum.cards.map((c, i) => [String(i + 1), c.f || '', c.b || ''])], [700, 4000, 4938]) : '');
     }
   }
   return '';
@@ -1386,7 +1410,7 @@ function coverBody() {
   const l = L(), s = LS(CUR), p = progress(l, s);
   return P('Lesson production document', { style: 'Title' }) + P(`${l.id} · ${l.t}`, { style: 'Subtitle' }) +
     T([['Item', 'Detail'], ['Subject', l.sub], ['Grade', String(l.g)], ['Big Idea', `${l.u}. ${l.un}`], ['Domain', l.dom], ['Lesson', `${l.l} – ${l.t}`], ['Lesson ID', l.id], ['Topic ID', l.topic], ['Short code', l.sc], ['ADEK standard code', l.code || ''], ['Lesson type', l.role], ['ADEK priority', l.pri || ''], ['TIMSS / PISA marks', marksOf(l).join('\n') || 'None'], ['Performance task', l.pt], ['Author', s.author || ''], ['Exported', new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })], ['Delivery window', l.win], ['Standards version', stdOf(l)], ['Delivery plan grade', 'Grade ' + l.pg], ['Status', `${p.done} of ${p.total} required sections marked as finished`]], [2600, 7038], { labelCol: true }) +
-    H2('Stages in platform order') + T([['Stage', 'Content'], ...STAGES.map(x => [`${x.n} · ${x.t}`, { card: 'Objectives and notes', diag: 'Prior and current understanding questions', hook: 'Real-life opening', disc: 'Activity, guided questions, practice', expl: 'Explanation, guided exercises, practice', pt: 'Real-life task and rubric', exit: 'Exit questions', sum: 'Rules, examples, mind map' }[x.id]])], [3000, 6638]);
+    H2('Stages in platform order') + T([['Stage', 'Content'], ...STAGES.map(x => [`${x.n} · ${x.t}`, { card: 'Objectives and notes', diag: 'Prior and current understanding questions', hook: 'Real-life opening', disc: 'Activity, guided questions, practice', expl: 'Explanation, guided exercises, practice', pt: 'Real-life task and rubric', exit: 'Exit questions', sum: 'Rules, examples, flashcards, mind map' }[x.id]])], [3000, 6638]);
 }
 function appendixBody() {
   const l = L(), s = LS(CUR), a = analyse(l, s);
@@ -1431,7 +1455,7 @@ function structureJSON() {
       { order: 5, id: 'explanation', objectives: l.los.map((o, i) => { const e = s.expl[i + 1] || {}; return { objective: 'LO' + (i + 1), concept: e.concept || '', workedExample: e.example || '', commonMistake: e.mistake || '', guidedExercises: lines(e.guided), image: imgJ(e) }; }), practice: sortByLO(s.explP.qs).map(optQ) },
       { order: 6, id: 'performance-task', included: analyse(l, s).ptHas, task: analyse(l, s).ptHas ? { title: s.pt.title || '', context: s.pt.context || '', task: s.pt.task || '', product: s.pt.product || '', modelSolution: s.pt.model || '', rubric: { level4: s.pt.r4 || '', level3: s.pt.r3 || '', level2: s.pt.r2 || '', level1: s.pt.r1 || '' }, processes: s.pt.procs || [] } : null },
       { order: 7, id: 'exit-ticket', questions: sortByLO(s.exit.qs).map(optQ) },
-      { order: 8, id: 'summary', keyRules: lines(s.sum.rules), examples: lines(s.sum.examples), mindMap: s.sum.mindmap || '', commonMistakes: lines(s.sum.mistakes) },
+      { order: 8, id: 'summary', keyRules: lines(s.sum.rules), examples: lines(s.sum.examples), mindMap: s.sum.mindmap || '', commonMistakes: lines(s.sum.mistakes), flashcards: (s.sum.cards || []).map(c => ({ front: c.f || '', back: c.b || '' })) },
     ],
   });
 }
