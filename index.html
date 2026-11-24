@@ -482,9 +482,41 @@ const DocxLib = (() => {
     return `<w:p>${ppr ? `<w:pPr>${ppr}</w:pPr>` : ''}${runs(text, o)}</w:p>`;
   }
   /* Multi-line text -> paragraphs; "- " lines become bullets, leading spaces become indent. */
+  const SEP = /^\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?$/;
+  const isRow = t => t.startsWith('|') && (t.match(/\|/g) || []).length >= 2;
+  const isTab = t => t.includes('\t') && t.split('\t').filter(x => x.trim()).length >= 2;
+  const splitRow = t => t.includes('\t') && !t.startsWith('|') ? t.split('\t').map(x => x.trim()) : t.replace(/^\|/, '').replace(/\|\s*$/, '').split('|').map(x => x.trim());
+  /* A block of "| a | b |" rows (or tab-separated rows) becomes a real table; "|---|---|" rows are dropped. */
+  function gridTable(rows, tw) {
+    const n = Math.max(...rows.map(r => r.length)); rows = rows.map(r => { r = r.slice(); while (r.length < n) r.push(''); return r; });
+    const len = Array.from({ length: n }, (_, c) => Math.max(6, ...rows.map(r => String(r[c]).length)));
+    const sum = len.reduce((a, b) => a + b, 0); let w = len.map(x => Math.max(700, Math.floor(tw * x / sum)));
+    const tot = w.reduce((a, b) => a + b, 0); if (tot > tw) w = w.map(x => Math.floor(x * tw / tot));
+    let x = `<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="${w.reduce((a, b) => a + b, 0)}" w:type="dxa"/><w:tblLayout w:type="fixed"/></w:tblPr><w:tblGrid>${w.map(v => `<w:gridCol w:w="${v}"/>`).join('')}</w:tblGrid>`;
+    rows.forEach((r, ri) => { x += '<w:tr><w:trPr><w:cantSplit/></w:trPr>'; r.forEach((c, ci) => { x += cell(String(c), w[ci], ri === 0 ? { fill: 'EDF2FF', bold: true, color: NAVY, size: 18 } : { size: 18 }); }); x += '</w:tr>'; });
+    return x + '</w:tbl>' + para('', { after: 60 });
+  }
   function lines(text, o = {}) {
     const arr = String(text ?? '').replace(/\r/g, '').split('\n');
-    const out = arr.map(raw => {
+    const tw = o.tw || 9000;
+    const pieces = []; let i = 0;
+    while (i < arr.length) {
+      const t = arr[i].trim(), nxt = (arr[i + 1] || '').trim();
+      const headMode = t.includes('|') && !isRow(t) && SEP.test(nxt) && nxt.includes('|') && nxt.includes('-');
+      if (isRow(t) || headMode || isTab(arr[i])) {
+        const tabMode = !isRow(t) && !headMode, rows = []; let j = i;
+        while (j < arr.length) {
+          const u = arr[j].trim();
+          if (rows.length && SEP.test(u) && u.includes('-') && u.includes('|')) { j++; continue; }
+          if (tabMode ? isTab(arr[j]) : (isRow(u) || (headMode && u.includes('|')))) { rows.push(splitRow(tabMode ? arr[j] : u)); j++; } else break;
+        }
+        if (rows.length >= 2) { pieces.push({ tbl: rows }); i = j; continue; }
+      }
+      pieces.push({ line: arr[i] }); i++;
+    }
+    const out = pieces.map(pc => {
+      if (pc.tbl) return gridTable(pc.tbl, tw);
+      const raw = pc.line;
       if (!raw.trim()) return para('', { ...o, after: 40 });
       const lead = raw.match(/^(\s*)/)[1].replace(/\t/g, '    ').length, t = raw.trim();
       const b = t.match(/^[-•*]\s+(.*)$/);
@@ -496,7 +528,7 @@ const DocxLib = (() => {
   }
   /* ---------- Tables ---------- */
   function cell(content, w, o = {}) {
-    const body = typeof content === 'string' && !content.startsWith('<w:p') ? lines(content, { size: o.size || 19, bold: o.bold, color: o.color }) : content;
+    const body = typeof content === 'string' && !content.startsWith('<w:p') ? lines(content, { size: o.size || 19, bold: o.bold, color: o.color, tw: Math.max(1200, w - 260) }) : content;
     const shd = o.fill ? `<w:shd w:val="clear" w:color="auto" w:fill="${o.fill}"/>` : '';
     return `<w:tc><w:tcPr><w:tcW w:w="${w}" w:type="dxa"/>${shd}<w:tcMar><w:top w:w="60" w:type="dxa"/><w:left w:w="100" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="100" w:type="dxa"/></w:tcMar></w:tcPr>${body || para('')}</w:tc>`;
   }
@@ -749,8 +781,8 @@ const qDerived = q => ['order', 'match', 'dnd'].includes(q.type);
 const qHasAnswer = q => qDerived(q) ? qLines(q.opts).length >= 2 : !!String(q.a || '').trim();
 function qAnswerText(q) {
   switch (q.type) {
-    case 'order': return qLines(q.opts).map((x, i) => `${i + 1}. ${x}`).join('\n');
-    case 'match': return qPairs(q.opts).map(([a, b]) => `${a} → ${b}`).join('\n');
+    case 'order': { const v = qOrderView(q); return v.it.map((x, i) => `${i + 1}. (${v.letter(x)}) ${x}`).join('\n'); }
+    case 'match': { const pr = qPairs(q.opts), right = pr.map(p => p[1]).reverse(); return pr.map(([a, b], i) => `${i + 1} → ${qLetter(right.indexOf(b))}:  ${a} → ${b}`).join('\n'); }
     case 'dnd': return qPairs(q.opts).map(([a, b]) => b ? `${a} → ${b}` : `${a} → (extra item, no target)`).join('\n');
     default: return q.a || '';
   }
@@ -917,7 +949,7 @@ Rules that apply to every answer:
 5. Context: use authentic contexts from Abu Dhabi and the UAE (places, heritage, environment, daily life, sport, technology) when they genuinely support the concept; otherwise use a clear mathematical or scientific context. Content must suit UAE culture, values and the age group. Do not refer to alcohol, gambling, smoking, violence, political or religious symbols, or anything culturally insensitive.
 6. Formulas: write every formula between \\( and \\), for example \\(\\frac{3}{4}\\), \\(x^{2}\\), \\(\\sqrt{16}\\), \\(3x+2=11\\). Do not use dollar signs. For Science, write chemical formulas and equations with \\ce, for example \\(\\ce{H2O}\\) and \\(\\ce{2H2 + O2 -> 2H2O}\\), and units as text, for example \\(5\\ \\text{m/s}\\) and \\(25^\\circ\\text{C}\\). Never put a formula in a code block. Keep ordinary words outside the delimiters. Describe any diagram in words.
 7. Science: use correct scientific terminology and SI units. Activities and investigations must be safe for the age group and use school-laboratory-safe materials. Never suggest hazardous procedures.
-8. Format: reply in plain text, using exactly the labelled layout requested. No tables, no markdown symbols (#, **), no emojis.
+8. Format: reply in plain text, using exactly the labelled layout requested. No markdown symbols (#, **), no emojis. If a table is really needed in a question, write it with one row per line and | between the cells, for example | Name | Value |, first row = the column headings, and no separator row.
 9. Originality: do not copy text from textbooks or websites. Write original wording and original questions.
 10. Be concise. Add no introductions, comments or summaries outside the requested layout.
 11. Instructional model: the learner revisits a classroom-taught topic. Use productive retrieval, feedback, misconceptions and scaffolds; do not frame every lesson as first exposure.
@@ -1164,7 +1196,7 @@ function qCard(list, i, q, o) {
   const optCell = u.o ? `<div${ansCell ? '' : ' class="c1"'}>${fieldRow(u.o[0], u.o[1], ta(`${P}.opts`, q.opts, { rows: ansCell ? 2 : 4 }))}</div>` : '';
   return `<div class="qc"><div class="qc-h"><strong>Question ${i + 1}</strong>${warn.length ? `<span class="warn">${warn.join(' · ')}</span>` : '<span class="okk">complete</span>'}<button class="x" title="Delete question" data-act="delq" data-list="${list}" data-i="${i}">Delete</button></div>
   <div class="qgrid"><div class="c1">${fieldRow('Exercise type', '', sel(`${P}.type`, q.type, QTYPES, { blank: 'Choose the type' }))}</div>
-  <div class="c1">${fieldRow(u.q[0], u.q[1], ta(`${P}.q`, q.q, { rows: 2 }))}</div>
+  <div class="c1">${fieldRow(u.q[0], u.q[1] + ' Table: one row per line, cells between bars, e.g. | Name | Value | (first row = headings; pasting from Word or Excel also works).', ta(`${P}.q`, q.q, { rows: 2 }))}</div>
   ${optCell}${ansCell}
   <div>${fieldRow('Hint', 'a nudge that does not give the answer away', ta(`${P}.hint`, q.hint, { rows: 2 }))}</div>
   <div>${fieldRow('Feedback', 'why the answer is right and the likely misconception', ta(`${P}.fb`, q.fb, { rows: 2 }))}</div>
@@ -1451,10 +1483,28 @@ const P = (t, o) => D.para(t, o), LN = (t, o) => D.lines(t, o), T = (r, w, o) =>
 const H1 = (t, pbb) => P(t, { style: 'Heading1', pbb }), H2 = t => P(t, { style: 'Heading2' }), H3 = t => P(t, { style: 'Heading3' });
 const MUTE = { italic: true, color: D.MUTED };
 const imgBox = (n, d, sim) => { n = String(n || '').trim(); d = String(d || '').trim(); return (n || d) ? P((sim ? '[IMAGE / SIMULATION: ' : '[IMAGE: ') + (n || 'name needed') + ']', { box: true, shade: 'FFF6E0', bold: true, color: D.GOLD, size: 19, before: 60, after: d ? 0 : 80 }) + (d ? P(d, { box: true, shade: 'FFF6E0', italic: true, color: D.MUTED, size: 18, after: 80 }) : '') : ''; };
-function qCellXml(q) {
+const qLetter = i => String.fromCharCode(65 + i);
+/* what the student sees for ordering / matching / drag-and-drop (shuffled, so the key is not given away) */
+function qOrderView(q) { const it = qLines(q.opts), sh = it.slice().reverse(); return { it, sh, letter: x => qLetter(sh.indexOf(x)) }; }
+function qStudentItems(q) {
+  if (q.type === 'order') { const { sh } = qOrderView(q); return sh.length ? P('Items to put in order (shown shuffled):', { italic: true, color: D.MUTED, size: 17, after: 20 }) + sh.map((x, i) => P(`${qLetter(i)}.\u00A0${x}`, { size: 19, indent: 280, hanging: 280, after: 20 })).join('') : ''; }
+  if (q.type === 'match') {
+    const pr = qPairs(q.opts); if (!pr.length) return '';
+    const right = pr.map(p => p[1]).reverse();
+    return P('Match each item on the left with one on the right:', { italic: true, color: D.MUTED, size: 17, after: 20 }) + P('Left', { bold: true, size: 17, after: 10 }) + pr.map((p, i) => P(`${i + 1}.\u00A0${p[0]}`, { size: 19, indent: 280, hanging: 280, after: 10 })).join('') + P('Right (shuffled)', { bold: true, size: 17, after: 10 }) + right.map((x, i) => P(`${qLetter(i)}.\u00A0${x}`, { size: 19, indent: 280, hanging: 280, after: 10 })).join('');
+  }
+  if (q.type === 'dnd') {
+    const pr = qPairs(q.opts); if (!pr.length) return '';
+    const items = pr.map(p => p[0]).slice().reverse(), targets = [...new Set(pr.map(p => p[1]).filter(Boolean))];
+    return P('Items to drag:', { italic: true, color: D.MUTED, size: 17, after: 20 }) + P(items.join('   ·   '), { size: 19, after: 40 }) + (targets.length ? P('Drop zones / targets:', { italic: true, color: D.MUTED, size: 17, after: 20 }) + P(targets.join('   ·   '), { size: 19, after: 40 }) : '');
+  }
+  return '';
+}
+function qCellXml(q, tw) {
   const tag = QTYPE_NAME[q.type] ? P(QTYPE_NAME[q.type], { italic: true, color: D.MUTED, size: 16, after: 20 }) : '';
-  let body = D.lines(q.q || '', { size: 19 });
-  if ((q.type === 'mcq' || !q.type) && q.opts) body += D.lines(q.opts, { size: 19 });
+  let body = D.lines(q.q || '', { size: 19, tw: tw || 2900 });
+  if ((q.type === 'mcq' || !q.type) && q.opts) body += D.lines(q.opts, { size: 19, tw: tw || 2900 });
+  body += qStudentItems(q);
   return tag + body + imgBox(q.img, q.imgd);
 }
 function imagesText() {
@@ -1477,10 +1527,10 @@ function numbered(text) {
 function qTable(qs, kind) {
   qs = qs.filter(q => [q.q, q.a, q.fb, q.hint, q.opts].some(x => MathLib.normalise(String(x || '')).trim()));
   if (!qs.length) return P('No questions added.', MUTE);
-  if (kind === 'diag') return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'Prior / Current', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.hint, q.fb, (KIND_NAME[q.kind] || '') + (q.pre ? (q.kind ? ' – ' : '') + q.pre : ''), q.lvl])], [400, 2300, 1600, 1500, 1700, 1100, 1038]);
-  if (kind === 'p') return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level', 'Tier'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl, q.tier])], [400, 2300, 1700, 1300, 1500, 550, 1000, 888]);
-  if (kind === 's') return T([['#', 'Support / Stretch', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), ROLE_NAME[q.role] || '', qCellXml(q), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [400, 900, 2200, 1500, 1300, 1500, 500, 1338]);
-  return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [450, 2700, 1800, 1500, 1600, 550, 1038]);
+  if (kind === 'diag') return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'Prior / Current', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q, 2900), qAnswerText(q), q.hint, q.fb, (KIND_NAME[q.kind] || '') + (q.pre ? (q.kind ? ' – ' : '') + q.pre : ''), q.lvl])], [400, 3100, 1400, 1200, 1400, 1100, 1038]);
+  if (kind === 'p') return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level', 'Tier'], ...qs.map((q, i) => [String(i + 1), qCellXml(q, 2900), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl, q.tier])], [400, 3100, 1500, 1200, 1300, 500, 900, 738]);
+  if (kind === 's') return T([['#', 'Support / Stretch', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), ROLE_NAME[q.role] || '', qCellXml(q, 2800), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [400, 900, 3000, 1400, 1100, 1300, 500, 1038]);
+  return T([['#', 'Question', 'Answer', 'Hint', 'Feedback', 'LO', 'Level'], ...qs.map((q, i) => [String(i + 1), qCellXml(q, 3100), qAnswerText(q), q.hint, q.fb, q.lo ? 'LO' + q.lo : '', q.lvl])], [450, 3300, 1600, 1300, 1400, 550, 1038]);
 }
 const kv = rows => T([['Part', 'Content'], ...rows.map(([k, v]) => [k, v || ''])], [2600, 7038], { labelCol: true });
 function sortByLO(qs) { return qs.map((q, i) => [q, i]).sort((a, b) => ((+a[0].lo || 99) - (+b[0].lo || 99)) || (a[1] - b[1])).map(x => x[0]); }
@@ -1555,7 +1605,7 @@ function exportFull() {
 const imgJ = o => (o && (String(o.img || '').trim() || String(o.imgd || '').trim())) ? { id: String(o.img || '').trim(), description: String(o.imgd || '').trim() } : null;
 const optQ = q => {
   const o = { type: QTYPE_JSON[q.type] || null, question: q.q };
-  if (q.type === 'order') o.correctOrder = qLines(q.opts);
+  if (q.type === 'order') { o.correctOrder = qLines(q.opts); o.itemsShownToStudent = qLines(q.opts).slice().reverse(); }
   else if (q.type === 'match') o.pairs = qPairs(q.opts).map(([left, right]) => ({ left, right }));
   else if (q.type === 'dnd') { o.items = qPairs(q.opts).filter(p => p[1]).map(([item, target]) => ({ item, target })); o.extraItems = qPairs(q.opts).filter(p => !p[1]).map(p => p[0]); }
   else if (q.type === 'fill') { o.text = q.q; o.blanks = String(q.a || '').split(';').map(x => x.trim()).filter(Boolean).map(x => x.split('/').map(y => y.trim()).filter(Boolean)); }
